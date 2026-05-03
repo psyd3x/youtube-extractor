@@ -1,0 +1,14 @@
+{
+  "title": "Test Video",
+  "tldr": "A short summary.",
+  "lazy": {
+    "key_points": ["Point one", "Point two"],
+    "summary_paragraph": "A paragraph."
+  },
+  "full": {
+    "chapters": [
+      {"title": "Intro", "summary": "Intro summary", "key_points": ["k1"], "quotes": ["q1"]}
+    ],
+    "topics": ["test"], "people": [], "references": []
+  }
+}
