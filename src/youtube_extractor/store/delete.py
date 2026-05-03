@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from youtube_extractor.config import Settings
 from youtube_extractor.store.atomic import rewrite_ndjson_filtered
 from youtube_extractor.store.catalog import read_all
 from youtube_extractor.store.jobs import JobStore
@@ -38,13 +39,21 @@ def _unlink_if_present(p: Path) -> bool:
         return False
 
 
-def delete_by_slug(settings, slug: str, jobs: JobStore) -> DeleteResult:
+def delete_by_slug(settings: Settings, slug: str, jobs: JobStore) -> DeleteResult:
     """Hard-delete every artifact tied to ``slug``: the .md in the Obsidian vault,
     both PDFs in the output dir, the catalog row, and every jobs.ndjson entry whose
     latest state has the same slug. Returns a per-step report.
 
     Raises ``ArchiveEntryNotFound`` if the slug is not in the catalog. Anything else
     (disk full, permission denied during rewrite) propagates.
+
+    On partial failure (e.g. catalog rewrite raises after unlinks succeed), files
+    are gone but the catalog row remains; a re-run with the same slug recovers
+    (md/pdf bools come back False, catalog_row True, jobs_removed 0 as appropriate).
+
+    Caller must serialize concurrent calls — the catalog rewrite is single-writer
+    per atomic.py's contract. The FastAPI route layer is the right place to add an
+    asyncio.Lock if request concurrency ever matters in practice.
     """
     catalog = settings.output_dir / "catalog.ndjson"
 
