@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.deedee.youtube-extractor</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/user/Youtube-extractor/.venv/bin/youtube-extractor</string>
+    <string>serve</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/user/Youtube-extractor</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/user/Youtube-extractor/.venv/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Users/user/.openclaw/logs/youtube-extractor.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/user/.openclaw/logs/youtube-extractor.err</string>
+</dict>
+</plist>
