@@ -48,3 +48,28 @@ async def test_http_error():
     client = LLMClient(base_url="http://x", api_key=None, timeout_s=5)
     with pytest.raises(LLMError):
         await client.chat_json(system="s", user="u", response_schema_name="x")
+
+
+@respx.mock
+async def test_chat_json_strips_code_fences():
+    """Hermes (and Claude/GPT sometimes) wrap JSON in ```json ... ``` even with json_object mode.
+    The client must strip the fences before parsing, or every distillation call fails."""
+    fenced = '```json\n{"greeting": "Hello"}\n```'
+    respx.post("http://x/v1/chat/completions").mock(
+        return_value=httpx.Response(200, json={"choices": [{"message": {"content": fenced}}]})
+    )
+    client = LLMClient(base_url="http://x", api_key=None, timeout_s=5)
+    result = await client.chat_json(system="s", user="u", response_schema_name="x")
+    assert result == {"greeting": "Hello"}
+
+
+@respx.mock
+async def test_chat_json_strips_preamble():
+    """Some models add a 'Here is the JSON:' preamble. We slice from first { to last }."""
+    preamble = 'Sure, here is the JSON you asked for:\n{"key": "value", "n": 3}\nLet me know if you need more.'
+    respx.post("http://x/v1/chat/completions").mock(
+        return_value=httpx.Response(200, json={"choices": [{"message": {"content": preamble}}]})
+    )
+    client = LLMClient(base_url="http://x", api_key=None, timeout_s=5)
+    result = await client.chat_json(system="s", user="u", response_schema_name="x")
+    assert result == {"key": "value", "n": 3}
