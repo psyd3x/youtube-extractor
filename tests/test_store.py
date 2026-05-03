@@ -62,8 +62,6 @@ def test_jobstore_lifecycle(tmp_path):
 
 
 def test_jobstore_remove_by_slug(tmp_path):
-    from youtube_extractor.store.jobs import JobStore
-
     store = JobStore(tmp_path / "jobs.ndjson")
     j1 = JobRecord(id="j1", url="u1", status=JobStatus.queued)
     store.put(j1)
@@ -95,8 +93,6 @@ def test_jobstore_remove_by_slug(tmp_path):
 
 
 def test_jobstore_remove_by_slug_no_match(tmp_path):
-    from youtube_extractor.store.jobs import JobStore
-
     store = JobStore(tmp_path / "jobs.ndjson")
     store.put(JobRecord(id="j1", url="u1", status=JobStatus.done, slug="slug-X"))
 
