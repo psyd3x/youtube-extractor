@@ -3615,7 +3615,7 @@ Use a video different from Task 22's so it actually exercises the path (e.g. a 3
 
 - [ ] **Step 3: Verify on LAN from a second device**
 
-From the iPhone or laptop on `http://<your-lan-ip>:3000/youtube` (or Tailscale URL once that's restored): confirm the archive renders, the PDF buttons download, and the "View .md" button (non-Mac fallback) shows the markdown.
+From a second device on the LAN at `http://<your-lan-ip>:3000/youtube` (or your Tailscale URL): confirm the archive renders, the PDF buttons download, and the "View .md" button (non-Mac fallback) shows the markdown.
 
 - [ ] **Step 4: Verify duplicate-URL idempotency**
 
