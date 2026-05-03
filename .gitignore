@@ -15,7 +15,6 @@ output/
 *.pdf
 catalog.ndjson
 jobs.ndjson
-docs/manual-test-log.md
 
 # Secrets
 .env
