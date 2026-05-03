@@ -50,6 +50,29 @@ youtube-extractor serve
 
 REST API surface: `POST /jobs`, `GET /jobs/{id}`, `GET /archive`, `GET /pdfs/{slug}/{full|lazy}`, `GET /files/{slug}/md`. See `docs/specs/2026-05-03-youtube-extractor-design.md` for the full spec.
 
+### Auto-start on macOS (launchd)
+
+```bash
+mkdir -p ~/.openclaw/logs   # or wherever you want logs
+cp deploy/com.deedee.youtube-extractor.plist ~/Library/LaunchAgents/
+launchctl load -w ~/Library/LaunchAgents/com.deedee.youtube-extractor.plist
+launchctl list | grep youtube-extractor   # status 0 = running
+```
+
+The plist assumes the repo lives at `/Users/<you>/Youtube-extractor/` with a venv at `.venv/`. Edit `ProgramArguments`, `WorkingDirectory`, and the log paths if your setup differs.
+
+To stop / restart / uninstall:
+
+```bash
+launchctl stop com.deedee.youtube-extractor
+launchctl start com.deedee.youtube-extractor
+launchctl unload ~/Library/LaunchAgents/com.deedee.youtube-extractor.plist
+```
+
+### Auto-start on Linux (systemd)
+
+A user-unit is straightforward — call `youtube-extractor serve` from `~/.config/systemd/user/youtube-extractor.service`. PR welcome if you want this committed.
+
 ## Configuration
 
 All paths and endpoints are env-overridable. See `.env.example`.
