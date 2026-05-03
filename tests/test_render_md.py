@@ -1,4 +1,4 @@
-from youtube_extractor.models import Metadata, Distillation, LazyDoc, FullDoc, Chapter
+from youtube_extractor.models import Chapter, Distillation, FullDoc, LazyDoc, Metadata
 from youtube_extractor.pipeline.render_md import render_markdown
 
 
