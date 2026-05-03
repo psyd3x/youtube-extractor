@@ -1,0 +1,66 @@
+[project]
+name = "youtube-extractor"
+version = "0.1.0"
+description = "Turn a YouTube link into a distilled Obsidian .md plus FULL and LAZY PDFs."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+authors = [{name = "psyd3x"}]
+keywords = ["youtube", "transcript", "obsidian", "pdf", "llm", "summarisation"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Multimedia :: Video",
+  "Topic :: Text Processing :: Markup :: Markdown",
+]
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.32",
+  "httpx>=0.27",
+  "pydantic>=2.9",
+  "pydantic-settings>=2.5",
+  "yt-dlp>=2024.10.0",
+  "youtube-transcript-api>=0.6.2",
+  "jinja2>=3.1",
+  "weasyprint>=63.0",
+  "click>=8.1",
+  "python-slugify>=8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3",
+  "pytest-asyncio>=0.24",
+  "pytest-mock>=3.14",
+  "respx>=0.21",
+  "ruff>=0.7",
+]
+
+[project.urls]
+Homepage = "https://github.com/psyd3x/youtube-extractor"
+Repository = "https://github.com/psyd3x/youtube-extractor"
+Issues = "https://github.com/psyd3x/youtube-extractor/issues"
+
+[project.scripts]
+youtube-extractor = "youtube_extractor.cli:cli"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/youtube_extractor"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
