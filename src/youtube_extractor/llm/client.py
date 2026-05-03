@@ -1,12 +1,51 @@
 from __future__ import annotations
 
 import json
+import re
 
 import httpx
 
 
 class LLMError(Exception):
     pass
+
+
+_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```", re.DOTALL)
+
+
+def _extract_json(content: str) -> dict:
+    """Robustly pull a JSON object out of an LLM response.
+
+    Tries (in order):
+    1. Direct json.loads — works when the model produces clean JSON.
+    2. Strip ```json ... ``` code fences (some models wrap output even when
+       response_format=json_object is requested — Hermes/Claude/GPT can all do this).
+    3. Slice from the first { to the last } and try once more — handles cases where
+       the model adds a "Here's the JSON:" preamble.
+    """
+    s = content.strip()
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        pass
+
+    m = _FENCE_RE.search(s)
+    if m:
+        try:
+            return json.loads(m.group(1))
+        except json.JSONDecodeError:
+            pass
+
+    # Last resort: grab the outermost {...} or [...]
+    first_obj = s.find("{")
+    last_obj = s.rfind("}")
+    if first_obj >= 0 and last_obj > first_obj:
+        try:
+            return json.loads(s[first_obj : last_obj + 1])
+        except json.JSONDecodeError:
+            pass
+
+    raise json.JSONDecodeError("no parseable JSON found in content", s, 0)
 
 
 class LLMClient:
@@ -63,7 +102,7 @@ class LLMClient:
             try:
                 payload = r.json()
                 content = payload["choices"][0]["message"]["content"]
-                return json.loads(content)
+                return _extract_json(content)
             except (KeyError, IndexError, ValueError, json.JSONDecodeError) as e:
                 last_err = e
                 continue
