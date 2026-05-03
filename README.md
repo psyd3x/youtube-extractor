@@ -24,6 +24,18 @@ cp .env.example .env
 youtube-extractor extract https://youtube.com/watch?v=dQw4w9WgXcQ
 ```
 
+### System dependencies
+
+PDF rendering uses [WeasyPrint](https://weasyprint.org/), which requires Pango at the OS level:
+
+```bash
+# macOS
+brew install pango
+
+# Debian/Ubuntu
+sudo apt-get install -y libpango-1.0-0 libpangoft2-1.0-0
+```
+
 Outputs land in:
 - `$OBSIDIAN_VAULT_PATH/{slug}.md`
 - `$OUTPUT_DIR/{slug}-full.pdf`
