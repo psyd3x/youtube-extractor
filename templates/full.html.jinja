@@ -1,0 +1,27 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>{{ distill.title }} — FULL</title>
+<link rel="stylesheet" href="style.css"></head>
+<body>
+<h1>{{ distill.title }}</h1>
+<div class="meta">{{ meta.channel }} · {{ (meta.duration_s // 60) }} min{% if meta.published %} · {{ meta.published }}{% endif %} · YouTube</div>
+
+<div class="tldr"><strong>TL;DR</strong> — {{ distill.tldr }}</div>
+
+<h2>Key points</h2>
+<ul class="kp">{% for kp in distill.lazy.key_points %}<li>{{ kp }}</li>{% endfor %}</ul>
+
+<h2>Summary</h2>
+<p>{{ distill.lazy.summary_paragraph }}</p>
+
+<h2>Chapters</h2>
+{% for ch in distill.full.chapters %}
+<h3>{{ loop.index }}. {{ ch.title }}</h3>
+<p>{{ ch.summary }}</p>
+{% if ch.key_points %}<ul class="kp">{% for kp in ch.key_points %}<li>{{ kp }}</li>{% endfor %}</ul>{% endif %}
+{% if ch.quotes %}{% for q in ch.quotes %}<div class="quote">"{{ q }}"</div>{% endfor %}{% endif %}
+{% endfor %}
+
+{% if distill.full.references %}<h2>References</h2><ul>{% for r in distill.full.references %}<li>{{ r }}</li>{% endfor %}</ul>{% endif %}
+
+<div class="footer">Source: youtube.com/watch?v={{ meta.video_id }} · Extracted {{ extracted_date }}</div>
+</body></html>

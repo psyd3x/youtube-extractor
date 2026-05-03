@@ -1,0 +1,11 @@
+@page { size: A4; margin: 18mm 16mm; }
+body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; line-height: 1.5; color: #111; }
+h1 { font-size: 24pt; margin-bottom: 4pt; }
+h2 { font-size: 16pt; margin-top: 18pt; border-bottom: 1px solid #ddd; padding-bottom: 4pt; }
+h3 { font-size: 13pt; margin-top: 14pt; }
+.meta { color: #666; font-size: 10pt; margin-bottom: 16pt; }
+.tldr { background: #f5f5fa; border-left: 4px solid #6366f1; padding: 10pt 12pt; margin: 12pt 0; font-size: 11pt; }
+.kp { padding-left: 18pt; }
+.kp li { margin-bottom: 4pt; }
+.quote { border-left: 3px solid #ccc; padding: 4pt 12pt; color: #444; font-style: italic; margin: 6pt 0; }
+.footer { color: #888; font-size: 9pt; margin-top: 30pt; border-top: 1px solid #eee; padding-top: 8pt; }

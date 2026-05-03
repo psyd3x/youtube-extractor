@@ -1,0 +1,17 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>{{ distill.title }} — LAZY</title>
+<link rel="stylesheet" href="style.css"></head>
+<body>
+<h1>{{ distill.title }}</h1>
+<div class="meta">{{ meta.channel }} · {{ (meta.duration_s // 60) }} min · YouTube</div>
+
+<div class="tldr"><strong>TL;DR</strong> — {{ distill.tldr }}</div>
+
+<h2>Key points</h2>
+<ul class="kp">{% for kp in distill.lazy.key_points %}<li>{{ kp }}</li>{% endfor %}</ul>
+
+<h2>Summary</h2>
+<p>{{ distill.lazy.summary_paragraph }}</p>
+
+<div class="footer">Source: youtube.com/watch?v={{ meta.video_id }} · Extracted {{ extracted_date }} · Want detail? Open the FULL PDF or the .md in Obsidian.</div>
+</body></html>
