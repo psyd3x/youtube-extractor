@@ -80,3 +80,70 @@ def test_files_pdf_invalid_kind(tmp_path, monkeypatch):
     client = TestClient(app)
     r = client.get("/pdfs/anything/banana")
     assert r.status_code == 400
+
+
+def test_archive_delete_happy_path(tmp_path, monkeypatch):
+    from youtube_extractor.api import jobs as jobs_module
+    from youtube_extractor.models import JobRecord, JobStatus
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    monkeypatch.setattr(settings, "output_dir", tmp_path)
+    monkeypatch.setattr(settings, "obsidian_vault_path", vault)
+
+    # Swap the API's jobs singleton to point at tmp.
+    from youtube_extractor.store.jobs import JobStore
+    fresh_jobs = JobStore(tmp_path / "jobs.ndjson")
+    monkeypatch.setattr(jobs_module, "_jobs", fresh_jobs)
+
+    # Seed catalog + artifacts + a matching job.
+    md = vault / "slug-A.md"
+    md.write_text("# md", encoding="utf-8")
+    pdf_full = tmp_path / "slug-A-full.pdf"
+    pdf_full.write_bytes(b"%PDF-1.7")
+    pdf_lazy = tmp_path / "slug-A-lazy.pdf"
+    pdf_lazy.write_bytes(b"%PDF-1.7")
+    append_entry(
+        tmp_path / "catalog.ndjson",
+        {
+            "slug": "slug-A", "video_id": "v", "title": "T", "channel": "C",
+            "url": "https://y/watch?v=v", "duration": 1, "extracted_at": 1.0,
+            "md_path": str(md), "pdf_full_path": str(pdf_full), "pdf_lazy_path": str(pdf_lazy),
+            "tags": [], "topics": [], "people": [],
+        },
+    )
+    fresh_jobs.put(JobRecord(id="j1", url="u", status=JobStatus.done, slug="slug-A"))
+
+    app = create_app()
+    client = TestClient(app)
+    r = client.delete("/archive/slug-A")
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["slug"] == "slug-A"
+    assert body["md"] is True
+    assert body["pdf_full"] is True
+    assert body["pdf_lazy"] is True
+    assert body["catalog_row"] is True
+    assert body["jobs_removed"] == 1
+
+    assert not md.exists()
+    assert not pdf_full.exists()
+    assert not pdf_lazy.exists()
+    # Archive list reflects the deletion
+    assert client.get("/archive").json() == []
+
+
+def test_archive_delete_unknown_slug_returns_404(tmp_path, monkeypatch):
+    from youtube_extractor.api import jobs as jobs_module
+    from youtube_extractor.store.jobs import JobStore
+
+    monkeypatch.setattr(settings, "output_dir", tmp_path)
+    monkeypatch.setattr(settings, "obsidian_vault_path", tmp_path / "vault")
+    monkeypatch.setattr(jobs_module, "_jobs", JobStore(tmp_path / "jobs.ndjson"))
+
+    app = create_app()
+    client = TestClient(app)
+    r = client.delete("/archive/nope")
+    assert r.status_code == 404
+    assert "nope" in r.json()["detail"]
