@@ -16,9 +16,17 @@ def rewrite_ndjson_filtered(path: Path, predicate: Callable[[dict], bool]) -> in
     removed total.
 
     If the file does not exist, returns 0 and creates nothing.
-    Atomicity: writes to a sibling .tmp file, then os.replace -- same-filesystem rename
-    is atomic on macOS APFS, ext4, and tmpfs. On any failure the original file is left
-    untouched and the temp file is removed.
+
+    Atomicity is at the visibility level: concurrent readers always see either the old
+    or the new file, never a partial. This is NOT crash-durable -- without fsync, a
+    power loss between os.replace and the kernel flush can lose both the rewrite and
+    the original. Matches the durability story of the rest of this codebase
+    (JobStore.put is plain append, no fsync). On any failure before os.replace, the
+    original file is left untouched and the temp file is removed.
+
+    Caller must serialize concurrent rewrites of the same path -- two callers racing
+    will each create their own temp file and last-writer-wins on os.replace, silently
+    dropping one filter's deletions.
     """
     if not path.exists():
         return 0
@@ -36,7 +44,9 @@ def rewrite_ndjson_filtered(path: Path, predicate: Callable[[dict], bool]) -> in
                 except Exception:
                     continue
                 if predicate(row):
-                    out.write(json.dumps(row) + "\n")
+                    # Write the original line back -- avoids non-ASCII re-encoding
+                    # and keeps kept rows byte-identical to what the writer emitted.
+                    out.write(line + "\n")
                 else:
                     removed += 1
         os.replace(tmp_path, path)

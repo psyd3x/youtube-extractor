@@ -72,3 +72,21 @@ def test_rewrite_is_atomic_no_partial_file(tmp_path, monkeypatch):
 
     # restore
     monkeypatch.setattr("youtube_extractor.store.atomic.os.replace", real_replace)
+
+
+def test_rewrite_predicate_raises_leaves_original_intact(tmp_path):
+    """A predicate that raises must not corrupt the original file or leave a .tmp."""
+    p = tmp_path / "rows.ndjson"
+    _write_ndjson(p, [{"id": "a"}, {"id": "b"}])
+
+    def boom(row):
+        raise RuntimeError("predicate failed")
+
+    with pytest.raises(RuntimeError):
+        rewrite_ndjson_filtered(p, predicate=boom)
+
+    # Original intact
+    assert _read_ndjson(p) == [{"id": "a"}, {"id": "b"}]
+    # No .tmp leftovers
+    leftovers = [f for f in tmp_path.iterdir() if f.suffix == ".tmp"]
+    assert leftovers == []
