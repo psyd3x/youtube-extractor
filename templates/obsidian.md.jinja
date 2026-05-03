@@ -1,0 +1,46 @@
+---
+title: "{{ meta.title | replace('"', '\\"') }}"
+channel: "{{ meta.channel | replace('"', '\\"') }}"
+url: https://youtube.com/watch?v={{ meta.video_id }}
+duration: {{ meta.duration_s }}
+{% if meta.published %}published: {{ meta.published }}{% endif %}
+extracted: {{ extracted_date }}
+tags: [youtube{% for t in distill.full.topics %}, {{ t }}{% endfor %}]
+people: {{ distill.full.people | tojson }}
+references: {{ distill.full.references | tojson }}
+pdfs:
+  full: "{{ pdf_full_path }}"
+  lazy: "{{ pdf_lazy_path }}"
+---
+
+# {{ distill.title }}
+
+> [!summary] TL;DR
+> {{ distill.tldr }}
+
+## Key points
+{% for kp in distill.lazy.key_points %}
+- {{ kp }}
+{% endfor %}
+
+## Summary
+{{ distill.lazy.summary_paragraph }}
+
+## Chapters
+{% for ch in distill.full.chapters %}
+### {{ loop.index }}. {{ ch.title }}
+
+{{ ch.summary }}
+
+{% if ch.key_points %}**Key points:**
+{% for kp in ch.key_points %}- {{ kp }}
+{% endfor %}{% endif %}
+{% if ch.quotes %}
+**Quotes:**
+{% for q in ch.quotes %}> {{ q }}
+
+{% endfor %}{% endif %}
+{% endfor %}
+
+---
+*Source: [YouTube](https://youtube.com/watch?v={{ meta.video_id }}) · Extracted {{ extracted_date }} · [PDF FULL]({{ pdf_full_path }}) · [PDF LAZY]({{ pdf_lazy_path }})*
