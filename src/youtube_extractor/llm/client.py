@@ -7,7 +7,9 @@ import httpx
 
 
 class LLMError(Exception):
-    pass
+    def __init__(self, message: str, *, code: str = "LLM_ERROR") -> None:
+        super().__init__(message)
+        self.code = code
 
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```", re.DOTALL)
@@ -109,7 +111,9 @@ class LLMClient:
                             f"{self.base_url}/v1/chat/completions", json=body, headers=headers
                         )
                 except httpx.HTTPError as e:
-                    raise LLMError(f"transport error to {self.base_url}: {e}") from e
+                    raise LLMError(
+                        f"transport error to {self.base_url}: {e}", code="LLM_UNREACHABLE"
+                    ) from e
 
                 if r.status_code != 200:
                     if mode.get("type") == "json_schema" and r.status_code in (400, 422):
@@ -117,7 +121,10 @@ class LLMClient:
                         # and fall through to the json_object fallback.
                         last_err = LLMError(f"json_schema unsupported ({r.status_code}): {r.text[:200]}")
                         break
-                    raise LLMError(f"upstream {r.status_code}: {r.text[:200]}")
+                    # 4xx is a deterministic client error (e.g. prompt over the context window) —
+                    # a replay fails identically. 5xx is a transient server fault worth retrying.
+                    code = "LLM_REQUEST_REJECTED" if 400 <= r.status_code < 500 else "LLM_UPSTREAM_ERROR"
+                    raise LLMError(f"upstream {r.status_code}: {r.text[:200]}", code=code)
 
                 try:
                     payload = r.json()
@@ -128,5 +135,6 @@ class LLMClient:
                     continue
 
         raise LLMError(
-            f"could not get valid JSON ({response_schema_name}): {last_err}"
+            f"could not get valid JSON ({response_schema_name}): {last_err}",
+            code="LLM_BAD_JSON",
         )

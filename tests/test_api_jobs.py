@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from youtube_extractor.api import jobs as jobs_mod
 from youtube_extractor.main import create_app
+from youtube_extractor.pipeline.distill import DistillError
 from youtube_extractor.pipeline.orchestrator import PipelineResult
 from youtube_extractor.store.jobs import JobStore
 
@@ -71,3 +72,33 @@ def test_get_unknown_job_404():
     client = TestClient(app)
     r = client.get("/jobs/job_does_not_exist")
     assert r.status_code == 404
+
+
+def _run_failing_job(tmp_path, monkeypatch, exc) -> dict:
+    fresh_store = JobStore(tmp_path / "jobs.ndjson")
+    monkeypatch.setattr(jobs_mod, "_jobs", fresh_store)
+    with patch.object(jobs_mod, "run_pipeline", new=AsyncMock(side_effect=exc)):
+        app = create_app()
+        client = TestClient(app)
+        r = client.post("/jobs", json={"url": "https://youtu.be/dQw4w9WgXcQ"})
+        job_id = r.json()["job_id"]
+        return client.get(f"/jobs/{job_id}").json()
+
+
+def test_distill_request_rejected_is_not_retryable(tmp_path, monkeypatch):
+    """A 400 (context overflow) must surface its real code and NOT be marked retryable —
+    retrying an oversized prompt fails identically. Regression for the HERMES_OFFLINE mislabel."""
+    err = DistillError("chunk 1/2 failed: upstream 400: maximum context length", code="LLM_REQUEST_REJECTED")
+    final = _run_failing_job(tmp_path, monkeypatch, err)
+    assert final["status"] == "failed"
+    assert final["stage"] == "distill"
+    assert final["error_code"] == "LLM_REQUEST_REJECTED"
+    assert final["retryable"] is False
+
+
+def test_distill_unreachable_is_retryable(tmp_path, monkeypatch):
+    err = DistillError("transport error to http://dgx:8000", code="LLM_UNREACHABLE")
+    final = _run_failing_job(tmp_path, monkeypatch, err)
+    assert final["status"] == "failed"
+    assert final["error_code"] == "LLM_UNREACHABLE"
+    assert final["retryable"] is True
