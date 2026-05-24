@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,7 +45,12 @@ async def run_pipeline(
     video_id = extract_video_id(url)
     catalog_path = output_dir / "catalog.ndjson"
 
-    existing = find_by_video_id(catalog_path, video_id)
+    # Every stage below is synchronous and blocking (yt-dlp network calls, transcript
+    # retries with time.sleep, CPU-heavy PDF rendering, file I/O). run_pipeline runs
+    # inside the FastAPI event loop via a background task, so each blocking call is
+    # offloaded with asyncio.to_thread — otherwise the loop stalls and concurrent
+    # POST /jobs requests time out at the proxy. distill is already async.
+    existing = await asyncio.to_thread(find_by_video_id, catalog_path, video_id)
     if existing:
         return PipelineResult(
             slug=existing["slug"],
@@ -53,20 +59,22 @@ async def run_pipeline(
             pdf_lazy_path=Path(existing["pdf_lazy_path"]),
         )
 
-    meta = fetch_metadata(video_id)
-    transcript = fetch_transcript(video_id)
+    meta = await asyncio.to_thread(fetch_metadata, video_id)
+    transcript = await asyncio.to_thread(fetch_transcript, video_id)
     distillation = await distill(meta, transcript)
 
     slug = _make_slug(meta)
     extracted_date = time.strftime("%Y-%m-%d")
-    pdf_full_path, pdf_lazy_path = render_pdfs(
+    pdf_full_path, pdf_lazy_path = await asyncio.to_thread(
+        render_pdfs,
         meta=meta,
         distill=distillation,
         slug=slug,
         output_dir=output_dir,
         extracted_date=extracted_date,
     )
-    md_path = render_markdown(
+    md_path = await asyncio.to_thread(
+        render_markdown,
         meta=meta,
         distill=distillation,
         slug=slug,
@@ -76,7 +84,8 @@ async def run_pipeline(
         extracted_date=extracted_date,
     )
 
-    append_entry(
+    await asyncio.to_thread(
+        append_entry,
         catalog_path,
         {
             "slug": slug,
