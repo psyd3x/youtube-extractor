@@ -42,6 +42,25 @@ def test_archive_list_and_search(tmp_path, monkeypatch):
     assert r.json() == []
 
 
+def test_archive_orders_newest_first(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "output_dir", tmp_path)
+    cat = tmp_path / "catalog.ndjson"
+    for slug, ts in [("old", 1.0), ("newest", 3.0), ("mid", 2.0)]:
+        append_entry(
+            cat,
+            {
+                "slug": slug, "video_id": slug, "title": "T", "channel": "C",
+                "url": "u", "duration": 1, "extracted_at": ts,
+                "md_path": "/x.md", "pdf_full_path": "/f.pdf", "pdf_lazy_path": "/l.pdf",
+                "tags": [], "topics": [], "people": [],
+            },
+        )
+    app = create_app()
+    client = TestClient(app)
+    slugs = [r["slug"] for r in client.get("/archive").json()]
+    assert slugs == ["newest", "mid", "old"]
+
+
 def test_files_pdf_serve(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "output_dir", tmp_path)
     pdf = tmp_path / "s1-full.pdf"
