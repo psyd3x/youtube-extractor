@@ -69,3 +69,43 @@ def test_chunk_prompt_fits_model_context():
         f"chunk prompt ~{est_prompt_tokens:.0f} tok + {OUTPUT_RESERVE} output reserve "
         f"exceeds {MODEL_CONTEXT}-token context (CHUNK_WORDS={distill_mod.CHUNK_WORDS})"
     )
+
+
+def _fat_partial() -> dict:
+    """A valid Distillation-shaped dict big enough that several can't share one prompt."""
+    return {
+        "title": "T",
+        "tldr": "x" * 200,
+        "lazy": {"key_points": ["k" * 100] * 5, "summary_paragraph": "lorem ipsum " * 1200},
+        "full": {
+            "chapters": [{"title": "c", "summary": "s" * 500, "key_points": [], "quotes": []}],
+            "topics": [],
+            "people": [],
+            "references": [],
+        },
+    }
+
+
+async def test_consolidation_batches_to_fit_context():
+    """Many fat chunk partials must be folded in budget-sized batches, never dumped into one
+    over-context consolidation call. Latent-overflow guard for very long (many-chunk) videos."""
+    long_transcript = Transcript(
+        segments=[TranscriptSegment(start=0, dur=1, text="x")],
+        full_text=("word " * (distill_mod.CHUNK_WORDS * 6)),  # 6 chunks -> 6 partials
+        language="en",
+        source="official",
+    )
+    captured: list[str] = []
+
+    async def _record(*args, **kwargs):
+        captured.append(kwargs["user"])
+        return _fat_partial()
+
+    fake = AsyncMock(side_effect=_record)
+    with patch("youtube_extractor.pipeline.distill.LLMClient.chat_json", fake):
+        d = await distill(_meta(), long_transcript)
+
+    consolidation_prompts = [p for p in captured if p.startswith("Consolidate")]
+    assert len(consolidation_prompts) >= 2, "expected batched (multi-call) consolidation"
+    assert max(len(p) for p in consolidation_prompts) <= distill_mod.MAX_CONSOLIDATE_CHARS + 2000
+    assert d.title
