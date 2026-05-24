@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     # Supported: chrome, safari, firefox, brave, edge. Set to empty string to disable.
     yt_dlp_cookies_browser: str = "chrome"
 
+    # Whisper fallback (Apple Silicon / mlx). Used only when a video has no
+    # official captions. Model loaded on demand and released after each use.
+    whisper_enabled: bool = True
+    whisper_model: str = "mlx-community/whisper-large-v3-turbo"
+
     @field_validator("obsidian_vault_path", "output_dir", mode="after")
     @classmethod
     def _expand(cls, v: Path) -> Path:
