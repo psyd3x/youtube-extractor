@@ -1,3 +1,5 @@
+import asyncio
+import time
 from unittest.mock import AsyncMock, patch
 
 from youtube_extractor.models import (
@@ -79,3 +81,50 @@ async def test_run_pipeline_idempotent(tmp_path):
     second = await run_pipeline(url=f"https://youtu.be/{VIDEO_ID}", vault_dir=vault, output_dir=output)
     assert second.slug == first.slug
     assert second.md_path == first.md_path
+
+
+async def test_run_pipeline_keeps_event_loop_responsive(tmp_path):
+    """Blocking pipeline stages must run off the event loop.
+
+    Regression: run_pipeline called sync fetch_metadata/fetch_transcript/render_*
+    directly, blocking the single FastAPI event loop for the duration of each job.
+    A concurrent POST /jobs then stalled past the MC proxy's 6s timeout -> 504 ->
+    the UI silently swallowed it ("click button, nothing happens").
+    """
+    vault = tmp_path / "vault"
+    output = tmp_path / "output"
+    block_s = 0.4
+
+    def blocking_metadata(_video_id):
+        time.sleep(block_s)  # stand-in for the synchronous yt-dlp network call
+        return _meta()
+
+    loop_gaps: list[float] = []
+
+    async def heartbeat():
+        while True:
+            t0 = time.monotonic()
+            await asyncio.sleep(0.02)
+            loop_gaps.append(time.monotonic() - t0)
+
+    pf, pl, md = output / "f.pdf", output / "l.pdf", vault / "x.md"
+    with patch("youtube_extractor.pipeline.orchestrator.find_by_video_id", return_value=None), \
+         patch("youtube_extractor.pipeline.orchestrator.fetch_metadata", side_effect=blocking_metadata), \
+         patch("youtube_extractor.pipeline.orchestrator.fetch_transcript", return_value=_tx()), \
+         patch("youtube_extractor.pipeline.orchestrator.distill", new=AsyncMock(return_value=_di())), \
+         patch("youtube_extractor.pipeline.orchestrator.render_pdfs", return_value=(pf, pl)), \
+         patch("youtube_extractor.pipeline.orchestrator.render_markdown", return_value=md), \
+         patch("youtube_extractor.pipeline.orchestrator.append_entry"):
+        hb = asyncio.create_task(heartbeat())
+        await asyncio.sleep(0.01)  # let the heartbeat park in its sleep before we block
+        try:
+            await run_pipeline(url=f"https://youtu.be/{VIDEO_ID}", vault_dir=vault, output_dir=output)
+        finally:
+            hb.cancel()
+
+    assert loop_gaps, "event loop fully blocked during pipeline — heartbeat never got to run"
+    max_gap = max(loop_gaps)
+    assert max_gap < block_s / 2, (
+        f"event loop blocked for {max_gap:.3f}s during pipeline; blocking stages "
+        f"must run via asyncio.to_thread"
+    )
