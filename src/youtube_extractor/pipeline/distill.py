@@ -13,6 +13,13 @@ from youtube_extractor.models import Distillation, Metadata, Transcript
 # 400). Regression-guarded by tests/test_distill.py::test_chunk_prompt_fits_model_context.
 CHUNK_WORDS = 12000
 
+# Max characters of serialized chunk partials to pack into one consolidation call. A long
+# video yields many partials; dumping them all into a single prompt overflows the context
+# the same way oversized chunks did. ~4 chars/token, so 60k chars ≈ 15k tokens, leaving the
+# window open for the merged-JSON response. Partials beyond this are folded over multiple
+# rounds. Regression-guarded by test_consolidation_batches_to_fit_context.
+MAX_CONSOLIDATE_CHARS = 60_000
+
 # Generated once; passed to the LLM as a structured-output schema so the response
 # is guaranteed to match Distillation regardless of which model serves the endpoint.
 _DISTILL_SCHEMA = Distillation.model_json_schema()
@@ -57,7 +64,7 @@ def _consolidate_prompt(meta: Metadata, partials: list[dict]) -> str:
         f"Consolidate these {len(partials)} chunk-level distillations of '{meta.title}' "
         f"into one final Distillation. Merge chapters in order, dedupe key points, "
         f"keep best quotes (verbatim). Return the same JSON schema.\n\n"
-        f"Chunks:\n{json.dumps(partials, indent=2)}"
+        f"Chunks:\n{json.dumps(partials)}"
     )
 
 
@@ -69,6 +76,29 @@ def _chunk_text(text: str, max_words: int) -> list[str]:
     for i in range(0, len(words), max_words):
         chunks.append(" ".join(words[i : i + max_words]))
     return chunks
+
+
+def _batch_partials(partials: list[dict], max_chars: int) -> list[list[dict]]:
+    """Greedily pack partials into batches whose compact-JSON size stays under max_chars.
+
+    If no two adjacent partials fit together, falls back to pairwise batches so a fold
+    round always makes progress (two chunk-level partials still fit the window).
+    """
+    batches: list[list[dict]] = []
+    current: list[dict] = []
+    current_chars = 0
+    for p in partials:
+        size = len(json.dumps(p))
+        if current and current_chars + size > max_chars:
+            batches.append(current)
+            current, current_chars = [], 0
+        current.append(p)
+        current_chars += size
+    if current:
+        batches.append(current)
+    if len(batches) == len(partials) and len(partials) > 1:
+        batches = [partials[i : i + 2] for i in range(0, len(partials), 2)]
+    return batches
 
 
 async def distill(meta: Metadata, transcript: Transcript) -> Distillation:
@@ -109,14 +139,25 @@ async def distill(meta: Metadata, transcript: Transcript) -> Distillation:
         except LLMError as e:
             raise DistillError(f"chunk {i + 1}/{len(chunks)} failed: {e}", code=e.code) from e
 
-    try:
-        consolidated = await client.chat_json(
-            system=SYSTEM_PROMPT,
-            user=_consolidate_prompt(meta, partials),
-            response_schema_name="Distillation",
-            schema=_DISTILL_SCHEMA,
-        )
-    except LLMError as e:
-        raise DistillError(f"consolidation failed: {e}", code=e.code) from e
+    # Fold partials into one Distillation, batching so no single consolidation prompt
+    # overflows the context window (a long video can produce many partials).
+    while len(partials) > 1:
+        next_partials: list[dict] = []
+        for batch in _batch_partials(partials, MAX_CONSOLIDATE_CHARS):
+            if len(batch) == 1:
+                next_partials.append(batch[0])
+                continue
+            try:
+                next_partials.append(
+                    await client.chat_json(
+                        system=SYSTEM_PROMPT,
+                        user=_consolidate_prompt(meta, batch),
+                        response_schema_name="Distillation",
+                        schema=_DISTILL_SCHEMA,
+                    )
+                )
+            except LLMError as e:
+                raise DistillError(f"consolidation failed: {e}", code=e.code) from e
+        partials = next_partials
 
-    return Distillation.model_validate(consolidated)
+    return Distillation.model_validate(partials[0])
