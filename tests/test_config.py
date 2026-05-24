@@ -5,7 +5,9 @@ def test_settings_loads_defaults(monkeypatch):
     monkeypatch.delenv("LLM_BASE_URL", raising=False)
     monkeypatch.delenv("OUTPUT_DIR", raising=False)
     monkeypatch.delenv("OBSIDIAN_VAULT_PATH", raising=False)
-    s = Settings()
+    # _env_file=None isolates from the deployment .env (gitignored) so this asserts
+    # the shipped code defaults, not whatever endpoint the local box is pointed at.
+    s = Settings(_env_file=None)
     assert s.llm_base_url == "http://localhost:8642"
     assert s.host == "127.0.0.1"
     assert s.port == 18765

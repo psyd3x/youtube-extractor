@@ -69,44 +69,64 @@ class LLMClient:
         system: str,
         user: str,
         response_schema_name: str,
+        schema: dict | None = None,
         max_retries: int = 1,
     ) -> dict:
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
-        body: dict = {
+        base_body: dict = {
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            "response_format": {"type": "json_object"},
             "temperature": 0.2,
         }
         if self.model:
-            body["model"] = self.model
+            base_body["model"] = self.model
+
+        # Response-format modes to try, in order. When a JSON schema is supplied we
+        # ask the server to *enforce* it (vLLM/OpenAI structured outputs) so the shape
+        # is guaranteed regardless of which model is behind the endpoint. Backends that
+        # don't understand json_schema (some Ollama/older servers) reject it with
+        # 400/422 — fall back to plain json_object so the client stays multi-backend.
+        if schema is not None:
+            modes: list[dict] = [
+                {"type": "json_schema", "json_schema": {"name": response_schema_name, "schema": schema, "strict": True}},
+                {"type": "json_object"},
+            ]
+        else:
+            modes = [{"type": "json_object"}]
 
         last_err: Exception | None = None
-        for _attempt in range(max_retries + 1):
-            try:
-                async with httpx.AsyncClient(timeout=self.timeout_s) as cli:
-                    r = await cli.post(
-                        f"{self.base_url}/v1/chat/completions", json=body, headers=headers
-                    )
-            except httpx.HTTPError as e:
-                raise LLMError(f"transport error to {self.base_url}: {e}") from e
+        for mode in modes:
+            body = {**base_body, "response_format": mode}
+            for _attempt in range(max_retries + 1):
+                try:
+                    async with httpx.AsyncClient(timeout=self.timeout_s) as cli:
+                        r = await cli.post(
+                            f"{self.base_url}/v1/chat/completions", json=body, headers=headers
+                        )
+                except httpx.HTTPError as e:
+                    raise LLMError(f"transport error to {self.base_url}: {e}") from e
 
-            if r.status_code != 200:
-                raise LLMError(f"upstream {r.status_code}: {r.text[:200]}")
+                if r.status_code != 200:
+                    if mode.get("type") == "json_schema" and r.status_code in (400, 422):
+                        # Backend doesn't support json_schema — stop retrying this mode
+                        # and fall through to the json_object fallback.
+                        last_err = LLMError(f"json_schema unsupported ({r.status_code}): {r.text[:200]}")
+                        break
+                    raise LLMError(f"upstream {r.status_code}: {r.text[:200]}")
 
-            try:
-                payload = r.json()
-                content = payload["choices"][0]["message"]["content"]
-                return _extract_json(content)
-            except (KeyError, IndexError, ValueError, json.JSONDecodeError) as e:
-                last_err = e
-                continue
+                try:
+                    payload = r.json()
+                    content = payload["choices"][0]["message"]["content"]
+                    return _extract_json(content)
+                except (KeyError, IndexError, ValueError, json.JSONDecodeError) as e:
+                    last_err = e
+                    continue
 
         raise LLMError(
-            f"could not parse JSON after {max_retries + 1} attempts ({response_schema_name}): {last_err}"
+            f"could not get valid JSON ({response_schema_name}): {last_err}"
         )
