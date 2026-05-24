@@ -20,6 +20,16 @@ router = APIRouter()
 _jobs = JobStore(settings.output_dir / "jobs.ndjson")
 _semaphore = asyncio.Semaphore(settings.max_concurrent_jobs)
 
+# A distill failure is retryable unless its cause is deterministic — a 4xx the LLM server
+# will reject identically on replay (e.g. a prompt over the context window). Keyed by the
+# code carried on DistillError; unknown codes default to retryable.
+_DISTILL_RETRYABLE = {
+    "LLM_UNREACHABLE": True,  # server may come back
+    "LLM_UPSTREAM_ERROR": True,  # 5xx — transient
+    "LLM_REQUEST_REJECTED": False,  # 4xx — deterministic
+    "LLM_BAD_JSON": True,  # model nondeterminism — a replay may parse
+}
+
 
 class JobCreateBody(BaseModel):
     url: str
@@ -96,7 +106,13 @@ async def _run(job_id: str, url: str) -> None:
         except NoTranscriptError as e:
             _fail(rec, JobStage.transcript, "NO_TRANSCRIPT", str(e), retryable=False)
         except DistillError as e:
-            _fail(rec, JobStage.distill, "HERMES_OFFLINE", str(e), retryable=True)
+            _fail(
+                rec,
+                JobStage.distill,
+                e.code,
+                str(e),
+                retryable=_DISTILL_RETRYABLE.get(e.code, True),
+            )
         except Exception as e:
             _fail(rec, None, "UNKNOWN", str(e), retryable=True)
 

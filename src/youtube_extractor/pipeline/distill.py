@@ -19,7 +19,9 @@ _DISTILL_SCHEMA = Distillation.model_json_schema()
 
 
 class DistillError(Exception):
-    pass
+    def __init__(self, message: str, *, code: str = "DISTILL_FAILED") -> None:
+        super().__init__(message)
+        self.code = code
 
 
 SYSTEM_PROMPT = """You are an expert at distilling YouTube video transcripts into structured knowledge.
@@ -88,7 +90,7 @@ async def distill(meta: Metadata, transcript: Transcript) -> Distillation:
                 schema=_DISTILL_SCHEMA,
             )
         except LLMError as e:
-            raise DistillError(str(e)) from e
+            raise DistillError(str(e), code=e.code) from e
         return Distillation.model_validate(raw)
 
     partials: list[dict] = []
@@ -105,7 +107,7 @@ async def distill(meta: Metadata, transcript: Transcript) -> Distillation:
                 )
             )
         except LLMError as e:
-            raise DistillError(f"chunk {i + 1}/{len(chunks)} failed: {e}") from e
+            raise DistillError(f"chunk {i + 1}/{len(chunks)} failed: {e}", code=e.code) from e
 
     try:
         consolidated = await client.chat_json(
@@ -115,6 +117,6 @@ async def distill(meta: Metadata, transcript: Transcript) -> Distillation:
             schema=_DISTILL_SCHEMA,
         )
     except LLMError as e:
-        raise DistillError(f"consolidation failed: {e}") from e
+        raise DistillError(f"consolidation failed: {e}", code=e.code) from e
 
     return Distillation.model_validate(consolidated)

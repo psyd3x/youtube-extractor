@@ -108,3 +108,48 @@ async def test_chat_json_strips_preamble():
     client = LLMClient(base_url="http://x", api_key=None, timeout_s=5)
     result = await client.chat_json(system="s", user="u", response_schema_name="x")
     assert result == {"key": "value", "n": 3}
+
+
+# --- error classification: LLMError.code must reflect the real cause, not a catch-all ---
+
+
+@respx.mock
+async def test_transport_error_code_is_unreachable():
+    respx.post("http://x/v1/chat/completions").mock(side_effect=httpx.ConnectError("refused"))
+    client = LLMClient(base_url="http://x", api_key=None, timeout_s=5)
+    with pytest.raises(LLMError) as ei:
+        await client.chat_json(system="s", user="u", response_schema_name="x")
+    assert ei.value.code == "LLM_UNREACHABLE"
+
+
+@respx.mock
+async def test_upstream_4xx_code_is_request_rejected():
+    """A 400 (e.g. prompt over context window) is a deterministic client error, not 'offline'."""
+    respx.post("http://x/v1/chat/completions").mock(
+        return_value=httpx.Response(400, text="This model's maximum context length is 32768 tokens")
+    )
+    client = LLMClient(base_url="http://x", api_key=None, timeout_s=5)
+    with pytest.raises(LLMError) as ei:
+        # no schema -> single json_object mode, so the 400 is raised (not treated as schema-unsupported)
+        await client.chat_json(system="s", user="u", response_schema_name="x")
+    assert ei.value.code == "LLM_REQUEST_REJECTED"
+
+
+@respx.mock
+async def test_upstream_5xx_code_is_upstream_error():
+    respx.post("http://x/v1/chat/completions").mock(return_value=httpx.Response(503))
+    client = LLMClient(base_url="http://x", api_key=None, timeout_s=5)
+    with pytest.raises(LLMError) as ei:
+        await client.chat_json(system="s", user="u", response_schema_name="x")
+    assert ei.value.code == "LLM_UPSTREAM_ERROR"
+
+
+@respx.mock
+async def test_bad_json_code():
+    respx.post("http://x/v1/chat/completions").mock(
+        return_value=httpx.Response(200, json={"choices": [{"message": {"content": "not-json"}}]})
+    )
+    client = LLMClient(base_url="http://x", api_key=None, timeout_s=5)
+    with pytest.raises(LLMError) as ei:
+        await client.chat_json(system="s", user="u", response_schema_name="x")
+    assert ei.value.code == "LLM_BAD_JSON"
