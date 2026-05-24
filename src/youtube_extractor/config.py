@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     llm_timeout_s: int = 300
     transcript_retries: int = 3
 
+    # Browser to pull cookies from for yt-dlp (avoids bot detection).
+    # Supported: chrome, safari, firefox, brave, edge. Set to empty string to disable.
+    yt_dlp_cookies_browser: str = "chrome"
+
     @field_validator("obsidian_vault_path", "output_dir", mode="after")
     @classmethod
     def _expand(cls, v: Path) -> Path:
