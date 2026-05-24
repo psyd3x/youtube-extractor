@@ -37,6 +37,7 @@ dev = [
   "respx>=0.21",
   "ruff>=0.7",
 ]
+whisper = ["mlx-whisper>=0.4"]
 
 [project.urls]
 Homepage = "https://github.com/psyd3x/youtube-extractor"
