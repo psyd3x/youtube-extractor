@@ -6,7 +6,12 @@ from youtube_extractor.config import settings
 from youtube_extractor.llm.client import LLMClient, LLMError
 from youtube_extractor.models import Distillation, Metadata, Transcript
 
-CHUNK_WORDS = 18000
+# Words per chunk. Sized against the distill model's token context (kimi-linear-48b:
+# 32768): whisper transcripts tokenize at ~1.8 tok/word, so each chunk's prompt must
+# stay well under the window AND leave room for the model to generate the JSON output.
+# 12000 words ≈ 22k prompt tokens, leaving ~10k for the response. 18000 overflowed (HTTP
+# 400). Regression-guarded by tests/test_distill.py::test_chunk_prompt_fits_model_context.
+CHUNK_WORDS = 12000
 
 # Generated once; passed to the LLM as a structured-output schema so the response
 # is guaranteed to match Distillation regardless of which model serves the endpoint.

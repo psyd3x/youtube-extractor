@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from youtube_extractor.models import Metadata, Transcript, TranscriptSegment
+from youtube_extractor.pipeline import distill as distill_mod
 from youtube_extractor.pipeline.distill import distill
 
 FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "sample_distillation.json").read_text())
@@ -43,3 +44,28 @@ async def test_distill_chunked_long_video():
         d = await distill(_meta(), long_transcript)
     assert fake.call_count >= 3
     assert d.title
+
+
+def test_chunk_prompt_fits_model_context():
+    """A worst-case full-size chunk must leave the model room to READ the prompt
+    AND GENERATE the distillation within its context window.
+
+    Regression for the V0-yBVdbi6w incident: CHUNK_WORDS=18000 produced a
+    ~33k-token prompt that overflowed Kimi's 32768 context (HTTP 400), surfaced
+    only once the whisper fallback started feeding full-length transcripts.
+    """
+    MODEL_CONTEXT = 32768  # kimi-linear-48b
+    OUTPUT_RESERVE = 6000  # tokens the model needs to emit the chunk-level JSON
+    TOKENS_PER_WORD = 1.85  # observed ~1.8 for whisper text (token-dense); round up
+
+    transcript = ("word " * (distill_mod.CHUNK_WORDS * 3)).strip()
+    chunks = distill_mod._chunk_text(transcript, distill_mod.CHUNK_WORDS)
+    biggest_words = max(len(c.split()) for c in chunks)
+    # Fixed per-request overhead: system prompt + user scaffold (title/desc/schema hint).
+    scaffold_words = len(distill_mod.SYSTEM_PROMPT.split()) + 200
+    est_prompt_tokens = (biggest_words + scaffold_words) * TOKENS_PER_WORD
+
+    assert est_prompt_tokens + OUTPUT_RESERVE <= MODEL_CONTEXT, (
+        f"chunk prompt ~{est_prompt_tokens:.0f} tok + {OUTPUT_RESERVE} output reserve "
+        f"exceeds {MODEL_CONTEXT}-token context (CHUNK_WORDS={distill_mod.CHUNK_WORDS})"
+    )
