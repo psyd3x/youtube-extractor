@@ -102,3 +102,29 @@ def test_distill_unreachable_is_retryable(tmp_path, monkeypatch):
     assert final["status"] == "failed"
     assert final["error_code"] == "LLM_UNREACHABLE"
     assert final["retryable"] is True
+
+
+def test_run_wires_stage_heartbeats(tmp_path, monkeypatch):
+    """_run passes an on_stage callback to run_pipeline that persists stage progress,
+    so a long-running job's record advances instead of looking hung."""
+    from youtube_extractor.models import JobStage
+
+    fresh_store = JobStore(tmp_path / "jobs.ndjson")
+    monkeypatch.setattr(jobs_mod, "_jobs", fresh_store)
+    received: dict = {}
+
+    async def fake_run(*, url, vault_dir, output_dir, on_stage=None):
+        received["on_stage"] = on_stage
+        if on_stage is not None:
+            on_stage(JobStage.distill)
+        return _ok_result(tmp_path)
+
+    with patch.object(jobs_mod, "run_pipeline", new=fake_run):
+        app = create_app()
+        client = TestClient(app)
+        job_id = client.post("/jobs", json={"url": "https://youtu.be/dQw4w9WgXcQ"}).json()["job_id"]
+        final = client.get(f"/jobs/{job_id}").json()
+
+    assert received["on_stage"] is not None, "_run must pass on_stage to run_pipeline"
+    assert final["status"] == "done"
+    assert final["stage"] == "distill", "the heartbeat must persist the in-flight stage"
