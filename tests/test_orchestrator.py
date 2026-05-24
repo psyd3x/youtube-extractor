@@ -8,6 +8,7 @@ from youtube_extractor.models import (
     Chapter,
     Distillation,
     FullDoc,
+    JobStage,
     LazyDoc,
     Metadata,
     Transcript,
@@ -76,6 +77,29 @@ async def test_run_pipeline_happy(tmp_path):
     assert result.slug.startswith(f"2024-01-15-{VIDEO_ID}-")
     cat = output / "catalog.ndjson"
     assert cat.exists() and cat.read_text().strip()
+
+
+async def test_run_pipeline_emits_stage_heartbeats(tmp_path):
+    """Each stage reports progress via on_stage so a long job's record advances
+    (a slow 3h transcription stays distinguishable from a hang)."""
+    seen: list[JobStage] = []
+    with patch("youtube_extractor.pipeline.orchestrator.fetch_metadata", return_value=_meta()), \
+         patch("youtube_extractor.pipeline.orchestrator.fetch_transcript", return_value=_tx()), \
+         patch("youtube_extractor.pipeline.orchestrator.distill", new=AsyncMock(return_value=_di())):
+        await run_pipeline(
+            url=f"https://youtu.be/{VIDEO_ID}",
+            vault_dir=tmp_path / "vault",
+            output_dir=tmp_path / "output",
+            on_stage=seen.append,
+        )
+    assert seen == [
+        JobStage.metadata,
+        JobStage.transcript,
+        JobStage.distill,
+        JobStage.render_pdf,
+        JobStage.render_md,
+        JobStage.store,
+    ]
 
 
 async def test_run_pipeline_idempotent(tmp_path):

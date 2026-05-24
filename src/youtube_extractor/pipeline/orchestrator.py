@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 from slugify import slugify
 
 from youtube_extractor.config import settings
-from youtube_extractor.models import Metadata
+from youtube_extractor.models import JobStage, Metadata
 from youtube_extractor.pipeline.distill import distill
 from youtube_extractor.pipeline.metadata import fetch_metadata
 from youtube_extractor.pipeline.render_md import render_markdown
@@ -38,12 +39,23 @@ async def run_pipeline(
     url: str,
     vault_dir: Path,
     output_dir: Path,
+    on_stage: Callable[[JobStage], None] | None = None,
 ) -> PipelineResult:
     """Run all 6 stages: url -> metadata -> transcript -> distill -> render -> catalog.
 
     Idempotent on video_id: a second call for an already-extracted video short-circuits
     to the catalog entry without re-running any stage.
+
+    on_stage (optional) is called as each stage begins. The service layer uses it to
+    advance the job record so a long job (e.g. a multi-hour whisper transcription) keeps
+    reporting progress instead of looking hung. Kept as a callback so this module stays
+    pure — it never touches the job store directly.
     """
+
+    def _emit(stage: JobStage) -> None:
+        if on_stage is not None:
+            on_stage(stage)
+
     video_id = extract_video_id(url)
     catalog_path = output_dir / "catalog.ndjson"
 
@@ -61,7 +73,10 @@ async def run_pipeline(
             pdf_lazy_path=Path(existing["pdf_lazy_path"]),
         )
 
+    _emit(JobStage.metadata)
     meta = await asyncio.to_thread(fetch_metadata, video_id)
+
+    _emit(JobStage.transcript)
     try:
         transcript = await asyncio.to_thread(fetch_transcript, video_id)
     except NoTranscriptError:
@@ -73,10 +88,12 @@ async def run_pipeline(
             raise NoTranscriptError(
                 f"no official transcript; whisper fallback failed: {e}"
             ) from e
+    _emit(JobStage.distill)
     distillation = await distill(meta, transcript)
 
     slug = _make_slug(meta)
     extracted_date = time.strftime("%Y-%m-%d")
+    _emit(JobStage.render_pdf)
     pdf_full_path, pdf_lazy_path = await asyncio.to_thread(
         render_pdfs,
         meta=meta,
@@ -85,6 +102,7 @@ async def run_pipeline(
         output_dir=output_dir,
         extracted_date=extracted_date,
     )
+    _emit(JobStage.render_md)
     md_path = await asyncio.to_thread(
         render_markdown,
         meta=meta,
@@ -96,6 +114,7 @@ async def run_pipeline(
         extracted_date=extracted_date,
     )
 
+    _emit(JobStage.store)
     await asyncio.to_thread(
         append_entry,
         catalog_path,

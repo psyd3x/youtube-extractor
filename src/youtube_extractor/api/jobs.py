@@ -89,11 +89,20 @@ async def _run(job_id: str, url: str) -> None:
         rec.updated_at = time.time()
         _jobs.put(rec)
 
+        def _on_stage(stage: JobStage) -> None:
+            # Heartbeat: advance the record as each pipeline stage begins so a long job
+            # (e.g. a multi-hour whisper transcription) keeps moving updated_at instead
+            # of looking hung.
+            rec.stage = stage
+            rec.updated_at = time.time()
+            _jobs.put(rec)
+
         try:
             result = await run_pipeline(
                 url=url,
                 vault_dir=settings.obsidian_vault_path,
                 output_dir=settings.output_dir,
+                on_stage=_on_stage,
             )
             rec.status = JobStatus.done
             rec.slug = result.slug
