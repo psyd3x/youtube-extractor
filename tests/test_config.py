@@ -28,3 +28,9 @@ def test_paths_expanded(monkeypatch, tmp_path):
     s = Settings()
     assert s.output_dir.is_absolute()
     assert s.obsidian_vault_path.is_absolute()
+
+
+def test_settings_whisper_defaults():
+    s = Settings(_env_file=None)
+    assert s.whisper_enabled is True
+    assert s.whisper_model == "mlx-community/whisper-large-v3-turbo"
