@@ -8,6 +8,10 @@ from youtube_extractor.models import Distillation, Metadata, Transcript
 
 CHUNK_WORDS = 18000
 
+# Generated once; passed to the LLM as a structured-output schema so the response
+# is guaranteed to match Distillation regardless of which model serves the endpoint.
+_DISTILL_SCHEMA = Distillation.model_json_schema()
+
 
 class DistillError(Exception):
     pass
@@ -76,6 +80,7 @@ async def distill(meta: Metadata, transcript: Transcript) -> Distillation:
                 system=SYSTEM_PROMPT,
                 user=_user_prompt(meta, chunks[0], is_chunk=False),
                 response_schema_name="Distillation",
+                schema=_DISTILL_SCHEMA,
             )
         except LLMError as e:
             raise DistillError(str(e)) from e
@@ -91,6 +96,7 @@ async def distill(meta: Metadata, transcript: Transcript) -> Distillation:
                         meta, chunk, is_chunk=True, total_chunks=len(chunks), idx=i
                     ),
                     response_schema_name="Distillation",
+                    schema=_DISTILL_SCHEMA,
                 )
             )
         except LLMError as e:
@@ -101,6 +107,7 @@ async def distill(meta: Metadata, transcript: Transcript) -> Distillation:
             system=SYSTEM_PROMPT,
             user=_consolidate_prompt(meta, partials),
             response_schema_name="Distillation",
+            schema=_DISTILL_SCHEMA,
         )
     except LLMError as e:
         raise DistillError(f"consolidation failed: {e}") from e
