@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import yt_dlp
 
+from youtube_extractor.config import settings
 from youtube_extractor.models import Metadata
 
 
@@ -18,7 +19,9 @@ def _format_date(yyyymmdd: str | None) -> str | None:
 def fetch_metadata(video_id: str) -> Metadata:
     """Fetch video metadata via yt-dlp without downloading the video itself."""
     url = f"https://www.youtube.com/watch?v={video_id}"
-    opts = {"quiet": True, "skip_download": True, "no_warnings": True}
+    opts: dict = {"quiet": True, "skip_download": True, "no_warnings": True}
+    if settings.yt_dlp_cookies_browser:
+        opts["cookiesfrombrowser"] = (settings.yt_dlp_cookies_browser,)
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
