@@ -7,13 +7,15 @@ from pathlib import Path
 
 from slugify import slugify
 
+from youtube_extractor.config import settings
 from youtube_extractor.models import Metadata
 from youtube_extractor.pipeline.distill import distill
 from youtube_extractor.pipeline.metadata import fetch_metadata
 from youtube_extractor.pipeline.render_md import render_markdown
 from youtube_extractor.pipeline.render_pdf import render_pdfs
-from youtube_extractor.pipeline.transcript import fetch_transcript
+from youtube_extractor.pipeline.transcript import NoTranscriptError, fetch_transcript
 from youtube_extractor.pipeline.url import extract_video_id
+from youtube_extractor.pipeline.whisper_fallback import WhisperError, whisper_transcript
 from youtube_extractor.store.catalog import append_entry, find_by_video_id
 
 
@@ -60,7 +62,17 @@ async def run_pipeline(
         )
 
     meta = await asyncio.to_thread(fetch_metadata, video_id)
-    transcript = await asyncio.to_thread(fetch_transcript, video_id)
+    try:
+        transcript = await asyncio.to_thread(fetch_transcript, video_id)
+    except NoTranscriptError:
+        if not settings.whisper_enabled:
+            raise
+        try:
+            transcript = await asyncio.to_thread(whisper_transcript, video_id)
+        except WhisperError as e:
+            raise NoTranscriptError(
+                f"no official transcript; whisper fallback failed: {e}"
+            ) from e
     distillation = await distill(meta, transcript)
 
     slug = _make_slug(meta)

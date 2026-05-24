@@ -2,6 +2,8 @@ import asyncio
 import time
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from youtube_extractor.models import (
     Chapter,
     Distillation,
@@ -12,6 +14,8 @@ from youtube_extractor.models import (
     TranscriptSegment,
 )
 from youtube_extractor.pipeline.orchestrator import PipelineResult, run_pipeline
+from youtube_extractor.pipeline.transcript import NoTranscriptError
+from youtube_extractor.pipeline.whisper_fallback import WhisperError
 
 VIDEO_ID = "dQw4w9WgXcQ"
 
@@ -44,6 +48,13 @@ def _di():
             chapters=[Chapter(title="c", summary="s", key_points=["k"], quotes=["q"])],
             topics=["x"],
         ),
+    )
+
+
+def _whisper_tx():
+    return Transcript(
+        segments=[TranscriptSegment(start=0, dur=1, text="spoken")],
+        full_text="spoken words", language="en", source="whisper",
     )
 
 
@@ -128,3 +139,43 @@ async def test_run_pipeline_keeps_event_loop_responsive(tmp_path):
         f"event loop blocked for {max_gap:.3f}s during pipeline; blocking stages "
         f"must run via asyncio.to_thread"
     )
+
+
+async def test_pipeline_uses_whisper_when_no_official_transcript(tmp_path, monkeypatch):
+    monkeypatch.setattr("youtube_extractor.pipeline.orchestrator.settings.whisper_enabled", True)
+    with patch("youtube_extractor.pipeline.orchestrator.fetch_metadata", return_value=_meta()), \
+         patch("youtube_extractor.pipeline.orchestrator.fetch_transcript",
+               side_effect=NoTranscriptError("none")), \
+         patch("youtube_extractor.pipeline.orchestrator.whisper_transcript",
+               return_value=_whisper_tx()), \
+         patch("youtube_extractor.pipeline.orchestrator.distill", new=AsyncMock(return_value=_di())):
+        result = await run_pipeline(
+            url=f"https://youtu.be/{VIDEO_ID}", vault_dir=tmp_path / "v", output_dir=tmp_path / "o"
+        )
+    assert result.md_path.exists()
+
+
+async def test_pipeline_no_whisper_when_disabled(tmp_path, monkeypatch):
+    monkeypatch.setattr("youtube_extractor.pipeline.orchestrator.settings.whisper_enabled", False)
+    with patch("youtube_extractor.pipeline.orchestrator.fetch_metadata", return_value=_meta()), \
+         patch("youtube_extractor.pipeline.orchestrator.fetch_transcript",
+               side_effect=NoTranscriptError("none")), \
+         patch("youtube_extractor.pipeline.orchestrator.whisper_transcript") as wt:
+        with pytest.raises(NoTranscriptError):
+            await run_pipeline(
+                url=f"https://youtu.be/{VIDEO_ID}", vault_dir=tmp_path / "v", output_dir=tmp_path / "o"
+            )
+        wt.assert_not_called()
+
+
+async def test_pipeline_whisper_failure_becomes_no_transcript(tmp_path, monkeypatch):
+    monkeypatch.setattr("youtube_extractor.pipeline.orchestrator.settings.whisper_enabled", True)
+    with patch("youtube_extractor.pipeline.orchestrator.fetch_metadata", return_value=_meta()), \
+         patch("youtube_extractor.pipeline.orchestrator.fetch_transcript",
+               side_effect=NoTranscriptError("none")), \
+         patch("youtube_extractor.pipeline.orchestrator.whisper_transcript",
+               side_effect=WhisperError("download failed")), \
+         pytest.raises(NoTranscriptError):
+        await run_pipeline(
+            url=f"https://youtu.be/{VIDEO_ID}", vault_dir=tmp_path / "v", output_dir=tmp_path / "o"
+        )
