@@ -86,6 +86,38 @@ class Distillation(BaseModel):
     full: FullDoc
 
 
+class Step(BaseModel):
+    n: int
+    action: str
+    detail: str = ""
+    command: str = ""
+    prompt: str = ""
+
+
+class PromptItem(BaseModel):
+    label: str
+    text: str
+
+
+class ResourceItem(BaseModel):
+    label: str
+    url: str = ""
+
+
+class InstructionsAndData(BaseModel):
+    goal: str
+    kind: Literal["tutorial", "mixed", "discussion"] = "tutorial"
+    prerequisites: list[str] = []
+    steps: list[Step] = []
+    prompts: list[PromptItem] = []
+    commands: list[str] = []
+    resources: list[ResourceItem] = []
+    config: list[str] = []
+    notes: list[str] = []
+    takeaways: list[str] = []  # usable know-how when there is no explicit workflow (discussion videos)
+    vault_links: list[str] = []  # zk-steward Obsidian backlinks like "[[Topic]]"
+
+
 class JobStatus(StrEnum):
     queued = "queued"
     running = "running"
@@ -98,6 +130,7 @@ class JobStage(StrEnum):
     metadata = "metadata"
     transcript = "transcript"
     distill = "distill"
+    instructions = "instructions"
     render_md = "render_md"
     render_pdf = "render_pdf"
     store = "store"

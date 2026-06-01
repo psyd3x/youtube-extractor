@@ -10,8 +10,8 @@ router = APIRouter()
 
 @router.get("/pdfs/{slug}/{kind}")
 async def get_pdf(slug: str, kind: str) -> FileResponse:
-    if kind not in ("full", "lazy"):
-        raise HTTPException(status_code=400, detail="kind must be full or lazy")
+    if kind not in ("full", "lazy", "instructions"):
+        raise HTTPException(status_code=400, detail="kind must be full, lazy, or instructions")
     p = settings.output_dir / f"{slug}-{kind}.pdf"
     if not p.exists():
         raise HTTPException(status_code=404, detail="pdf not found")

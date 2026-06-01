@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -11,9 +12,10 @@ from slugify import slugify
 from youtube_extractor.config import settings
 from youtube_extractor.models import JobStage, Metadata
 from youtube_extractor.pipeline.distill import distill
+from youtube_extractor.pipeline.instructions import extract_instructions
 from youtube_extractor.pipeline.metadata import fetch_metadata
 from youtube_extractor.pipeline.render_md import render_markdown
-from youtube_extractor.pipeline.render_pdf import render_pdfs
+from youtube_extractor.pipeline.render_pdf import render_instructions_pdf, render_pdfs
 from youtube_extractor.pipeline.transcript import NoTranscriptError, fetch_transcript
 from youtube_extractor.pipeline.url import extract_video_id
 from youtube_extractor.pipeline.whisper_fallback import WhisperError, whisper_transcript
@@ -26,6 +28,9 @@ class PipelineResult:
     md_path: Path
     pdf_full_path: Path
     pdf_lazy_path: Path
+    # Defaulted so existing call sites that construct the 4-field result stay valid;
+    # None when instructions extraction was skipped or failed (best-effort).
+    pdf_instructions_path: Path | None = None
 
 
 def _make_slug(meta: Metadata) -> str:
@@ -71,6 +76,11 @@ async def run_pipeline(
             md_path=Path(existing["md_path"]),
             pdf_full_path=Path(existing["pdf_full_path"]),
             pdf_lazy_path=Path(existing["pdf_lazy_path"]),
+            pdf_instructions_path=(
+                Path(existing["pdf_instructions_path"])
+                if existing.get("pdf_instructions_path")
+                else None
+            ),
         )
 
     _emit(JobStage.metadata)
@@ -91,6 +101,16 @@ async def run_pipeline(
     _emit(JobStage.distill)
     distillation = await distill(meta, transcript)
 
+    # Instructions extraction is BEST-EFFORT: the core FULL/LAZY pipeline must still
+    # succeed even if this fails, so any error is logged and downgraded to None.
+    instructions = None
+    try:
+        _emit(JobStage.instructions)
+        instructions = await extract_instructions(meta, transcript)
+    except Exception as e:  # best-effort: includes InstructionsError and any LLM/IO fault
+        logging.getLogger(__name__).warning("instructions extraction failed: %s", e)
+        instructions = None
+
     slug = _make_slug(meta)
     extracted_date = time.strftime("%Y-%m-%d")
     _emit(JobStage.render_pdf)
@@ -102,6 +122,18 @@ async def run_pipeline(
         output_dir=output_dir,
         extracted_date=extracted_date,
     )
+    pdf_instructions_path = (
+        await asyncio.to_thread(
+            render_instructions_pdf,
+            meta=meta,
+            instructions=instructions,
+            slug=slug,
+            output_dir=output_dir,
+            extracted_date=extracted_date,
+        )
+        if instructions is not None
+        else None
+    )
     _emit(JobStage.render_md)
     md_path = await asyncio.to_thread(
         render_markdown,
@@ -112,6 +144,10 @@ async def run_pipeline(
         pdf_full_path=str(pdf_full_path),
         pdf_lazy_path=str(pdf_lazy_path),
         extracted_date=extracted_date,
+        instructions=instructions,
+        pdf_instructions_path=(
+            str(pdf_instructions_path) if pdf_instructions_path else None
+        ),
     )
 
     _emit(JobStage.store)
@@ -129,6 +165,9 @@ async def run_pipeline(
             "md_path": str(md_path),
             "pdf_full_path": str(pdf_full_path),
             "pdf_lazy_path": str(pdf_lazy_path),
+            "pdf_instructions_path": (
+                str(pdf_instructions_path) if pdf_instructions_path else None
+            ),
             "tags": ["youtube", *distillation.full.topics[:5]],
             "topics": distillation.full.topics,
             "people": distillation.full.people,
@@ -140,4 +179,5 @@ async def run_pipeline(
         md_path=md_path,
         pdf_full_path=pdf_full_path,
         pdf_lazy_path=pdf_lazy_path,
+        pdf_instructions_path=pdf_instructions_path,
     )
