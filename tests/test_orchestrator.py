@@ -8,12 +8,15 @@ from youtube_extractor.models import (
     Chapter,
     Distillation,
     FullDoc,
+    InstructionsAndData,
     JobStage,
     LazyDoc,
     Metadata,
+    Step,
     Transcript,
     TranscriptSegment,
 )
+from youtube_extractor.pipeline.instructions import InstructionsError
 from youtube_extractor.pipeline.orchestrator import PipelineResult, run_pipeline
 from youtube_extractor.pipeline.transcript import NoTranscriptError
 from youtube_extractor.pipeline.whisper_fallback import WhisperError
@@ -52,6 +55,16 @@ def _di():
     )
 
 
+def _instructions():
+    return InstructionsAndData(
+        goal="Build a retrieval-augmented app.",
+        kind="tutorial",
+        steps=[Step(n=1, action="Install deps", command="pip install chromadb")],
+        commands=["pip install chromadb"],
+        vault_links=["[[ChromaDB]]"],
+    )
+
+
 def _whisper_tx():
     return Transcript(
         segments=[TranscriptSegment(start=0, dur=1, text="spoken")],
@@ -64,7 +77,9 @@ async def test_run_pipeline_happy(tmp_path):
     output = tmp_path / "output"
     with patch("youtube_extractor.pipeline.orchestrator.fetch_metadata", return_value=_meta()), \
          patch("youtube_extractor.pipeline.orchestrator.fetch_transcript", return_value=_tx()), \
-         patch("youtube_extractor.pipeline.orchestrator.distill", new=AsyncMock(return_value=_di())):
+         patch("youtube_extractor.pipeline.orchestrator.distill", new=AsyncMock(return_value=_di())), \
+         patch("youtube_extractor.pipeline.orchestrator.extract_instructions",
+               new=AsyncMock(return_value=_instructions())):
         result = await run_pipeline(
             url=f"https://youtu.be/{VIDEO_ID}",
             vault_dir=vault,
@@ -74,9 +89,42 @@ async def test_run_pipeline_happy(tmp_path):
     assert result.md_path.exists()
     assert result.pdf_full_path.exists()
     assert result.pdf_lazy_path.exists()
+    assert result.pdf_instructions_path is not None
+    assert result.pdf_instructions_path.exists()
+    assert result.pdf_instructions_path.name == f"{result.slug}-instructions.pdf"
     assert result.slug.startswith(f"2024-01-15-{VIDEO_ID}-")
     cat = output / "catalog.ndjson"
     assert cat.exists() and cat.read_text().strip()
+    import json as _json
+    row = _json.loads(cat.read_text().strip().splitlines()[-1])
+    assert row["pdf_instructions_path"] == str(result.pdf_instructions_path)
+
+
+async def test_run_pipeline_instructions_best_effort(tmp_path):
+    """Instructions extraction is BEST-EFFORT: when extract_instructions raises, the job
+    still completes, no instructions pdf is written, and pdf_instructions_path is None."""
+    vault = tmp_path / "vault"
+    output = tmp_path / "output"
+    with patch("youtube_extractor.pipeline.orchestrator.fetch_metadata", return_value=_meta()), \
+         patch("youtube_extractor.pipeline.orchestrator.fetch_transcript", return_value=_tx()), \
+         patch("youtube_extractor.pipeline.orchestrator.distill", new=AsyncMock(return_value=_di())), \
+         patch("youtube_extractor.pipeline.orchestrator.extract_instructions",
+               new=AsyncMock(side_effect=InstructionsError("backend down"))), \
+         patch("youtube_extractor.pipeline.orchestrator.render_instructions_pdf") as rip:
+        result = await run_pipeline(
+            url=f"https://youtu.be/{VIDEO_ID}", vault_dir=vault, output_dir=output
+        )
+    # Core artifacts still produced.
+    assert result.md_path.exists()
+    assert result.pdf_full_path.exists()
+    assert result.pdf_lazy_path.exists()
+    # Instructions skipped entirely.
+    assert result.pdf_instructions_path is None
+    rip.assert_not_called()
+    # Catalog row carries a null instructions path (key present, value None).
+    import json as _json
+    row = _json.loads((output / "catalog.ndjson").read_text().strip().splitlines()[-1])
+    assert row.get("pdf_instructions_path") is None
 
 
 async def test_run_pipeline_emits_stage_heartbeats(tmp_path):
@@ -85,7 +133,9 @@ async def test_run_pipeline_emits_stage_heartbeats(tmp_path):
     seen: list[JobStage] = []
     with patch("youtube_extractor.pipeline.orchestrator.fetch_metadata", return_value=_meta()), \
          patch("youtube_extractor.pipeline.orchestrator.fetch_transcript", return_value=_tx()), \
-         patch("youtube_extractor.pipeline.orchestrator.distill", new=AsyncMock(return_value=_di())):
+         patch("youtube_extractor.pipeline.orchestrator.distill", new=AsyncMock(return_value=_di())), \
+         patch("youtube_extractor.pipeline.orchestrator.extract_instructions",
+               new=AsyncMock(return_value=_instructions())):
         await run_pipeline(
             url=f"https://youtu.be/{VIDEO_ID}",
             vault_dir=tmp_path / "vault",
@@ -96,6 +146,7 @@ async def test_run_pipeline_emits_stage_heartbeats(tmp_path):
         JobStage.metadata,
         JobStage.transcript,
         JobStage.distill,
+        JobStage.instructions,
         JobStage.render_pdf,
         JobStage.render_md,
         JobStage.store,
@@ -108,7 +159,9 @@ async def test_run_pipeline_idempotent(tmp_path):
     output = tmp_path / "output"
     with patch("youtube_extractor.pipeline.orchestrator.fetch_metadata", return_value=_meta()), \
          patch("youtube_extractor.pipeline.orchestrator.fetch_transcript", return_value=_tx()), \
-         patch("youtube_extractor.pipeline.orchestrator.distill", new=AsyncMock(return_value=_di())):
+         patch("youtube_extractor.pipeline.orchestrator.distill", new=AsyncMock(return_value=_di())), \
+         patch("youtube_extractor.pipeline.orchestrator.extract_instructions",
+               new=AsyncMock(return_value=None)):
         first = await run_pipeline(url=f"https://youtu.be/{VIDEO_ID}", vault_dir=vault, output_dir=output)
 
     # Second call — patches are gone; if orchestrator re-fetches, it'll hit real network and fail
@@ -147,6 +200,8 @@ async def test_run_pipeline_keeps_event_loop_responsive(tmp_path):
          patch("youtube_extractor.pipeline.orchestrator.fetch_metadata", side_effect=blocking_metadata), \
          patch("youtube_extractor.pipeline.orchestrator.fetch_transcript", return_value=_tx()), \
          patch("youtube_extractor.pipeline.orchestrator.distill", new=AsyncMock(return_value=_di())), \
+         patch("youtube_extractor.pipeline.orchestrator.extract_instructions",
+               new=AsyncMock(return_value=None)), \
          patch("youtube_extractor.pipeline.orchestrator.render_pdfs", return_value=(pf, pl)), \
          patch("youtube_extractor.pipeline.orchestrator.render_markdown", return_value=md), \
          patch("youtube_extractor.pipeline.orchestrator.append_entry"):
@@ -172,7 +227,9 @@ async def test_pipeline_uses_whisper_when_no_official_transcript(tmp_path, monke
                side_effect=NoTranscriptError("none")), \
          patch("youtube_extractor.pipeline.orchestrator.whisper_transcript",
                return_value=_whisper_tx()), \
-         patch("youtube_extractor.pipeline.orchestrator.distill", new=AsyncMock(return_value=_di())):
+         patch("youtube_extractor.pipeline.orchestrator.distill", new=AsyncMock(return_value=_di())), \
+         patch("youtube_extractor.pipeline.orchestrator.extract_instructions",
+               new=AsyncMock(return_value=None)):
         result = await run_pipeline(
             url=f"https://youtu.be/{VIDEO_ID}", vault_dir=tmp_path / "v", output_dir=tmp_path / "o"
         )

@@ -71,6 +71,8 @@ def test_delete_happy_path(tmp_path, monkeypatch):
     assert result.md is True
     assert result.pdf_full is True
     assert result.pdf_lazy is True
+    # Older row seeded without pdf_instructions_path: guard treats missing key as no file.
+    assert result.pdf_instructions is False
     assert result.catalog_row is True
     assert result.jobs_removed == 2
 
@@ -111,6 +113,63 @@ def test_delete_artifact_files_already_missing(tmp_path, monkeypatch):
     # PDFs still got removed
     assert not pdf_full.exists()
     assert not pdf_lazy.exists()
+
+
+def _seed_row_with_instructions(catalog, vault, output, *, slug="slug-INS"):
+    """Newer-shape row that also has an instructions PDF + pdf_instructions_path key."""
+    md = vault / f"{slug}.md"
+    md.write_text("# md", encoding="utf-8")
+    pdf_full = output / f"{slug}-full.pdf"
+    pdf_full.write_bytes(b"%PDF-1.7 full")
+    pdf_lazy = output / f"{slug}-lazy.pdf"
+    pdf_lazy.write_bytes(b"%PDF-1.7 lazy")
+    pdf_ins = output / f"{slug}-instructions.pdf"
+    pdf_ins.write_bytes(b"%PDF-1.7 instructions")
+    append_entry(
+        catalog,
+        {
+            "slug": slug,
+            "video_id": "ins",
+            "title": "Ins",
+            "channel": "C",
+            "url": "https://y/watch?v=ins",
+            "duration": 100,
+            "extracted_at": 2.0,
+            "md_path": str(md),
+            "pdf_full_path": str(pdf_full),
+            "pdf_lazy_path": str(pdf_lazy),
+            "pdf_instructions_path": str(pdf_ins),
+            "tags": [],
+            "topics": [],
+            "people": [],
+        },
+    )
+    return pdf_ins
+
+
+def test_delete_removes_instructions_pdf_when_present(tmp_path, monkeypatch):
+    vault, output, jobs = _setup(tmp_path, monkeypatch)
+    catalog = output / "catalog.ndjson"
+    pdf_ins = _seed_row_with_instructions(catalog, vault, output, slug="slug-INS")
+    assert pdf_ins.exists()
+
+    result = delete_by_slug(settings, "slug-INS", jobs)
+
+    assert result.pdf_instructions is True
+    assert not pdf_ins.exists()
+
+
+def test_delete_instructions_path_present_but_file_missing(tmp_path, monkeypatch):
+    """pdf_instructions_path set but the file already gone -> reported False, no crash."""
+    vault, output, jobs = _setup(tmp_path, monkeypatch)
+    catalog = output / "catalog.ndjson"
+    pdf_ins = _seed_row_with_instructions(catalog, vault, output, slug="slug-INS")
+    pdf_ins.unlink()
+
+    result = delete_by_slug(settings, "slug-INS", jobs)
+
+    assert result.pdf_instructions is False
+    assert result.catalog_row is True
 
 
 def test_delete_atomic_rewrite_preserves_other_rows(tmp_path, monkeypatch):

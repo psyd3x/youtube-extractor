@@ -11,7 +11,8 @@ references: {{ distill.full.references | tojson }}
 pdfs:
   full: "{{ pdf_full_path }}"
   lazy: "{{ pdf_lazy_path }}"
----
+{% if instructions and pdf_instructions_path %}  instructions: "{{ pdf_instructions_path }}"
+{% endif %}---
 
 # {{ distill.title }}
 
@@ -41,6 +42,53 @@ pdfs:
 
 {% endfor %}{% endif %}
 {% endfor %}
+{% if instructions %}
+## Instructions and data
 
+> [!goal] Goal ({{ instructions.kind }})
+> {{ instructions.goal }}
+
+{% if instructions.prerequisites %}**Prerequisites:**
+{% for p in instructions.prerequisites %}- {{ p }}
+{% endfor %}{% endif %}
+{% if instructions.steps %}**Steps:**
+{% for s in instructions.steps %}{{ loop.index }}. **{{ s.action }}**{% if s.detail %} — {{ s.detail }}{% endif %}
+{% if s.command %}
+    ```sh
+    {{ s.command }}
+    ```
+{% endif %}{% if s.prompt %}
+    ```
+    {{ s.prompt }}
+    ```
+{% endif %}{% endfor %}{% endif %}
+{% if instructions.takeaways and not instructions.steps %}**Takeaways:**
+{% for t in instructions.takeaways %}- {{ t }}
+{% endfor %}{% endif %}
+{% if instructions.prompts %}**Prompts:**
+{% for pr in instructions.prompts %}
+*{{ pr.label }}*
+
+```
+{{ pr.text }}
+```
+{% endfor %}{% endif %}
+{% if instructions.commands %}**Commands:**
+
+```sh
+{% for c in instructions.commands %}{{ c }}
+{% endfor %}```
+{% endif %}
+{% if instructions.config %}**Config:**
+{% for c in instructions.config %}- {{ c }}
+{% endfor %}{% endif %}
+{% if instructions.resources %}**Resources:**
+{% for r in instructions.resources %}- {% if r.url %}[{{ r.label }}]({{ r.url }}){% else %}{{ r.label }}{% endif %}
+{% endfor %}{% endif %}
+{% if instructions.notes %}**Notes:**
+{% for n in instructions.notes %}- {{ n }}
+{% endfor %}{% endif %}
+{% if instructions.vault_links %}**Related:** {% for v in instructions.vault_links %}{{ v }}{% if not loop.last %} · {% endif %}{% endfor %}
+{% endif %}{% endif %}
 ---
-*Source: [YouTube](https://youtube.com/watch?v={{ meta.video_id }}) · Extracted {{ extracted_date }} · [PDF FULL]({{ pdf_full_path }}) · [PDF LAZY]({{ pdf_lazy_path }})*
+*Source: [YouTube](https://youtube.com/watch?v={{ meta.video_id }}) · Extracted {{ extracted_date }} · [PDF FULL]({{ pdf_full_path }}) · [PDF LAZY]({{ pdf_lazy_path }}){% if instructions and pdf_instructions_path %} · [PDF INSTRUCTIONS]({{ pdf_instructions_path }}){% endif %}*

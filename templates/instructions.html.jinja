@@ -1,0 +1,43 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>{{ meta.title }} — INSTRUCTIONS</title>
+<link rel="stylesheet" href="style.css"></head>
+<body>
+<h1>{{ meta.title }} — Instructions &amp; data</h1>
+<div class="meta">{{ meta.channel }} · {{ (meta.duration_s // 60) }} min{% if meta.published %} · {{ meta.published }}{% endif %} · {{ instructions.kind }} · YouTube</div>
+
+<div class="tldr"><strong>Goal</strong> — {{ instructions.goal }}</div>
+
+{% if instructions.prerequisites %}<h2>Prerequisites</h2>
+<ul class="kp">{% for p in instructions.prerequisites %}<li>{{ p }}</li>{% endfor %}</ul>{% endif %}
+
+{% if instructions.steps %}<h2>Steps</h2>
+<ol class="steps">{% for s in instructions.steps %}
+<li><strong>{{ s.action }}</strong>{% if s.detail %}<div class="step-detail">{{ s.detail }}</div>{% endif %}
+{% if s.command %}<pre class="cmd"><code>{{ s.command }}</code></pre>{% endif %}
+{% if s.prompt %}<pre class="prompt">{{ s.prompt }}</pre>{% endif %}</li>
+{% endfor %}</ol>{% endif %}
+
+{% if instructions.takeaways and not instructions.steps %}<h2>Takeaways</h2>
+<ul class="kp">{% for t in instructions.takeaways %}<li>{{ t }}</li>{% endfor %}</ul>{% endif %}
+
+{% if instructions.prompts %}<h2>Prompts</h2>
+{% for pr in instructions.prompts %}<h3>{{ pr.label }}</h3>
+<pre class="prompt">{{ pr.text }}</pre>{% endfor %}{% endif %}
+
+{% if instructions.commands %}<h2>Commands</h2>
+{% for c in instructions.commands %}<pre class="cmd"><code>{{ c }}</code></pre>{% endfor %}{% endif %}
+
+{% if instructions.config %}<h2>Config</h2>
+<ul class="kp">{% for c in instructions.config %}<li>{{ c }}</li>{% endfor %}</ul>{% endif %}
+
+{% if instructions.resources %}<h2>Resources</h2>
+<ul>{% for r in instructions.resources %}<li>{% if r.url %}<a href="{{ r.url }}">{{ r.label }}</a>{% else %}{{ r.label }}{% endif %}</li>{% endfor %}</ul>{% endif %}
+
+{% if instructions.notes %}<h2>Notes</h2>
+<ul class="kp">{% for n in instructions.notes %}<li>{{ n }}</li>{% endfor %}</ul>{% endif %}
+
+{% if instructions.vault_links %}<h2>Vault links</h2>
+<p class="vault-links">{% for v in instructions.vault_links %}{{ v }}{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+
+<div class="footer">Source: youtube.com/watch?v={{ meta.video_id }} · Extracted {{ extracted_date }}</div>
+</body></html>

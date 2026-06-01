@@ -19,6 +19,7 @@ class DeleteResult:
     md: bool
     pdf_full: bool
     pdf_lazy: bool
+    pdf_instructions: bool
     catalog_row: bool
     jobs_removed: int
 
@@ -41,8 +42,9 @@ def _unlink_if_present(p: Path) -> bool:
 
 def delete_by_slug(settings: Settings, slug: str, jobs: JobStore) -> DeleteResult:
     """Hard-delete every artifact tied to ``slug``: the .md in the Obsidian vault,
-    both PDFs in the output dir, the catalog row, and every jobs.ndjson entry whose
-    latest state has the same slug. Returns a per-step report.
+    all PDFs in the output dir (full, lazy, and instructions when present), the
+    catalog row, and every jobs.ndjson entry whose latest state has the same slug.
+    Returns a per-step report.
 
     Raises ``ArchiveEntryNotFound`` if the slug is not in the catalog. Anything else
     (disk full, permission denied during rewrite) propagates.
@@ -64,6 +66,10 @@ def delete_by_slug(settings: Settings, slug: str, jobs: JobStore) -> DeleteResul
     md_removed = _unlink_if_present(Path(row["md_path"]))
     pdf_full_removed = _unlink_if_present(Path(row["pdf_full_path"]))
     pdf_lazy_removed = _unlink_if_present(Path(row["pdf_lazy_path"]))
+    pdf_instructions_path = row.get("pdf_instructions_path")
+    pdf_instructions_removed = (
+        _unlink_if_present(Path(pdf_instructions_path)) if pdf_instructions_path else False
+    )
 
     catalog_removed = rewrite_ndjson_filtered(catalog, predicate=lambda r: r.get("slug") != slug)
     jobs_removed_ids = jobs.remove_by_slug(slug)
@@ -73,6 +79,7 @@ def delete_by_slug(settings: Settings, slug: str, jobs: JobStore) -> DeleteResul
         md=md_removed,
         pdf_full=pdf_full_removed,
         pdf_lazy=pdf_lazy_removed,
+        pdf_instructions=pdf_instructions_removed,
         catalog_row=catalog_removed > 0,
         jobs_removed=len(jobs_removed_ids),
     )

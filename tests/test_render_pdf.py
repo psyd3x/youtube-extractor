@@ -1,5 +1,14 @@
-from youtube_extractor.models import Chapter, Distillation, FullDoc, LazyDoc, Metadata
-from youtube_extractor.pipeline.render_pdf import render_pdfs
+from youtube_extractor.models import (
+    Chapter,
+    Distillation,
+    FullDoc,
+    InstructionsAndData,
+    LazyDoc,
+    Metadata,
+    ResourceItem,
+    Step,
+)
+from youtube_extractor.pipeline.render_pdf import render_instructions_pdf, render_pdfs
 
 PDF_MAGIC = b"%PDF-"
 
@@ -25,3 +34,28 @@ def test_render_pdfs_writes_two_files(tmp_path):
     assert full_path.read_bytes()[:5] == PDF_MAGIC
     assert lazy_path.read_bytes()[:5] == PDF_MAGIC
     assert full_path.stat().st_size >= lazy_path.stat().st_size
+
+
+def _instructions():
+    return InstructionsAndData(
+        goal="Build a retrieval-augmented app.",
+        kind="tutorial",
+        prerequisites=["python 3.11"],
+        steps=[Step(n=1, action="Install deps", command="pip install chromadb")],
+        commands=["pip install chromadb"],
+        resources=[ResourceItem(label="Docs", url="https://example.com/docs")],
+        vault_links=["[[ChromaDB]]"],
+    )
+
+
+def test_render_instructions_pdf_writes_file(tmp_path):
+    out = render_instructions_pdf(
+        meta=_meta(),
+        instructions=_instructions(),
+        slug="2024-01-15-abc-v",
+        output_dir=tmp_path,
+        extracted_date="2026-05-03",
+    )
+    assert out == tmp_path / "2024-01-15-abc-v-instructions.pdf"
+    assert out.exists()
+    assert out.read_bytes()[:5] == PDF_MAGIC
