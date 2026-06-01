@@ -24,8 +24,17 @@ def create_app() -> FastAPI:
         # Best-effort LLM probe — don't block if it's slow.
         hermes_ok = False
         try:
+            # Send the bearer key if configured — the gateway (Hermes) 401s an
+            # unauthenticated /v1/models, which would otherwise false-negative here.
+            headers = (
+                {"Authorization": f"Bearer {settings.llm_api_key}"}
+                if settings.llm_api_key
+                else {}
+            )
             async with httpx.AsyncClient(timeout=2) as c:
-                r = await c.get(f"{settings.llm_base_url.rstrip('/')}/v1/models")
+                r = await c.get(
+                    f"{settings.llm_base_url.rstrip('/')}/v1/models", headers=headers
+                )
                 hermes_ok = r.status_code == 200
         except Exception:
             pass
