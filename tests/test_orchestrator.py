@@ -1,6 +1,6 @@
 import asyncio
 import time
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -260,3 +260,59 @@ async def test_pipeline_whisper_failure_becomes_no_transcript(tmp_path, monkeypa
         await run_pipeline(
             url=f"https://youtu.be/{VIDEO_ID}", vault_dir=tmp_path / "v", output_dir=tmp_path / "o"
         )
+
+
+async def test_transcript_is_cached_so_a_retry_skips_whisper(tmp_path):
+    """The 2026-09-21 case: whisper succeeded, distill failed, and the retry redid the
+    whole ~6 min transcription for a stage that had already worked. The second run must
+    reuse the cached transcript and never call fetch_transcript or whisper again."""
+    vault, output = tmp_path / "vault", tmp_path / "output"
+    url = f"https://youtu.be/{VIDEO_ID}"
+
+    # Run 1: no official transcript, whisper supplies it, then distill blows up.
+    whisper = MagicMock(return_value=_whisper_tx())
+    with patch("youtube_extractor.pipeline.orchestrator.fetch_metadata", return_value=_meta()), \
+         patch("youtube_extractor.pipeline.orchestrator.fetch_transcript",
+               side_effect=NoTranscriptError("none")), \
+         patch("youtube_extractor.pipeline.orchestrator.whisper_transcript", new=whisper), \
+         patch("youtube_extractor.pipeline.orchestrator.distill",
+               new=AsyncMock(side_effect=RuntimeError("distill exploded"))):
+        with pytest.raises(RuntimeError):
+            await run_pipeline(url=url, vault_dir=vault, output_dir=output)
+    assert whisper.call_count == 1, "whisper should have produced the transcript once"
+    assert (output / "transcripts" / f"{VIDEO_ID}.json").is_file(), "transcript must be cached"
+
+    # Run 2: the expensive paths are now booby-trapped — reaching either is the failure.
+    boom_fetch = MagicMock(side_effect=AssertionError("fetch_transcript called on retry"))
+    boom_whisper = MagicMock(side_effect=AssertionError("whisper re-ran on retry"))
+    with patch("youtube_extractor.pipeline.orchestrator.fetch_metadata", return_value=_meta()), \
+         patch("youtube_extractor.pipeline.orchestrator.fetch_transcript", new=boom_fetch), \
+         patch("youtube_extractor.pipeline.orchestrator.whisper_transcript", new=boom_whisper), \
+         patch("youtube_extractor.pipeline.orchestrator.distill", new=AsyncMock(return_value=_di())), \
+         patch("youtube_extractor.pipeline.orchestrator.extract_instructions",
+               new=AsyncMock(return_value=_instructions())):
+        result = await run_pipeline(url=url, vault_dir=vault, output_dir=output)
+    assert result.md_path.exists()
+    assert boom_fetch.call_count == 0 and boom_whisper.call_count == 0
+
+
+async def test_corrupt_transcript_cache_falls_back_to_refetching(tmp_path):
+    """A torn or truncated cache file must cost a re-fetch, never the whole job."""
+    vault, output = tmp_path / "vault", tmp_path / "output"
+    cache = output / "transcripts" / f"{VIDEO_ID}.json"
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_text("{not json at all", encoding="utf-8")
+
+    fetch = MagicMock(return_value=_tx())
+    with patch("youtube_extractor.pipeline.orchestrator.fetch_metadata", return_value=_meta()), \
+         patch("youtube_extractor.pipeline.orchestrator.fetch_transcript", new=fetch), \
+         patch("youtube_extractor.pipeline.orchestrator.distill", new=AsyncMock(return_value=_di())), \
+         patch("youtube_extractor.pipeline.orchestrator.extract_instructions",
+               new=AsyncMock(return_value=_instructions())):
+        result = await run_pipeline(
+            url=f"https://youtu.be/{VIDEO_ID}", vault_dir=vault, output_dir=output
+        )
+    assert fetch.call_count == 1, "corrupt cache must be treated as a miss"
+    assert result.md_path.exists()
+    # …and the bad file is replaced by a good one.
+    assert cache.read_text(encoding="utf-8").startswith("{")

@@ -50,6 +50,22 @@ def _extract_json(content: str) -> dict:
     raise json.JSONDecodeError("no parseable JSON found in content", s, 0)
 
 
+def missing_required(obj: dict, schema: dict | None) -> list[str]:
+    """Top-level `required` keys of `schema` absent from `obj`.
+
+    A cheap conformance probe, not a validator — the caller's pydantic model does
+    the real checking. Its job is to tell "the endpoint enforced the schema" apart
+    from "the endpoint accepted response_format and ignored it", which otherwise
+    look identical: both return HTTP 200 with parseable JSON.
+    """
+    if not schema or not isinstance(obj, dict):
+        return []
+    required = schema.get("required")
+    if not isinstance(required, list):
+        return []
+    return [k for k in required if isinstance(k, str) and k not in obj]
+
+
 class LLMClient:
     """Minimal OpenAI-compatible chat client. Works with Hermes, vLLM, Ollama, OpenAI."""
 
@@ -102,6 +118,7 @@ class LLMClient:
             modes = [{"type": "json_object"}]
 
         last_err: Exception | None = None
+        schema_ignored = False
         for mode in modes:
             body = {**base_body, "response_format": mode}
             for _attempt in range(max_retries + 1):
@@ -129,11 +146,40 @@ class LLMClient:
                 try:
                     payload = r.json()
                     content = payload["choices"][0]["message"]["content"]
-                    return _extract_json(content)
+                    obj = _extract_json(content)
                 except (KeyError, IndexError, ValueError, json.JSONDecodeError) as e:
                     last_err = e
                     continue
 
+                # The endpoint answered 200, so it "accepted" response_format. That
+                # is not the same as honouring it: the Hermes gateway accepts
+                # json_schema, returns 200, and replies with whatever the model felt
+                # like — prose, or a different object shape. The failure then surfaced
+                # stages later as a pydantic error about missing fields, pointing at
+                # the model instead of at the endpoint. Check conformance here, while
+                # we still know which mode produced it.
+                gaps = missing_required(obj, schema)
+                if not gaps:
+                    return obj
+                # Sticky: the json_object fallback failing afterwards must not erase
+                # the evidence that json_schema mode was accepted and not honoured.
+                if mode.get("type") == "json_schema":
+                    schema_ignored = True
+                last_err = LLMError(
+                    f"response missing required key(s) {gaps}; got {sorted(obj)[:8]}"
+                )
+                continue
+
+        if schema_ignored:
+            # Worth naming precisely: no amount of prompt work fixes an endpoint that
+            # drops response_format, and the fix is to point at one that enforces it
+            # (vLLM guided decoding) rather than to keep retrying here.
+            raise LLMError(
+                f"{self.base_url} accepted response_format=json_schema and returned "
+                f"non-conforming output for {response_schema_name} — the endpoint is "
+                f"ignoring structured output. Last error: {last_err}",
+                code="LLM_SCHEMA_IGNORED",
+            )
         raise LLMError(
             f"could not get valid JSON ({response_schema_name}): {last_err}",
             code="LLM_BAD_JSON",
