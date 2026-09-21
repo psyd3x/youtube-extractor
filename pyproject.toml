@@ -21,7 +21,15 @@ dependencies = [
   "httpx>=0.27",
   "pydantic>=2.9",
   "pydantic-settings>=2.5",
-  "yt-dlp>=2024.10.0",
+  # YouTube has required PO tokens since 2026-08: the stable yt-dlp 403s on every
+  # audio download (metadata still resolves, which is why this looked like a
+  # transcript problem) and surfaced here as "whisper fallback failed: HTTP Error
+  # 403: Forbidden" for any video without an official transcript. Needs yt-dlp
+  # NIGHTLY plus the bgutil plugin, which fetches tokens from the provider server
+  # (docker "bgutil-provider" on :4416, already running for vid2data). The .dev
+  # floor is what stops a plain `uv sync` resolving back to stable and re-breaking it.
+  "yt-dlp>=2026.8.4.234419.dev0",
+  "bgutil-ytdlp-pot-provider>=1.3.1",
   "youtube-transcript-api>=0.6.2",
   "jinja2>=3.1",
   "weasyprint>=63.0",

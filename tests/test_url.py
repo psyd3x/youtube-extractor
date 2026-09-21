@@ -9,6 +9,12 @@ VALID_CASES = [
     ("https://youtu.be/dQw4w9WgXcQ?si=abc", "dQw4w9WgXcQ"),
     ("https://www.youtube.com/embed/dQw4w9WgXcQ", "dQw4w9WgXcQ"),
     ("https://www.youtube.com/shorts/dQw4w9WgXcQ", "dQw4w9WgXcQ"),
+    # /live/ is what the share button gives you for a livestream or premiere,
+    # and every one of them was rejected before this (live failure 2026-09-21).
+    ("https://www.youtube.com/live/dQw4w9WgXcQ", "dQw4w9WgXcQ"),
+    ("https://www.youtube.com/live/dQw4w9WgXcQ?si=abc", "dQw4w9WgXcQ"),
+    ("https://m.youtube.com/live/dQw4w9WgXcQ", "dQw4w9WgXcQ"),
+    ("https://www.youtube.com/v/dQw4w9WgXcQ", "dQw4w9WgXcQ"),
     ("https://m.youtube.com/watch?v=dQw4w9WgXcQ", "dQw4w9WgXcQ"),
     ("dQw4w9WgXcQ", "dQw4w9WgXcQ"),
 ]
@@ -18,6 +24,10 @@ INVALID_CASES = [
     "https://www.youtube.com/",
     "not a url",
     "",
+    # A prefix path still has to carry a real id — the shape check is what
+    # stops "/live/" widening into "accept anything after a slash".
+    "https://www.youtube.com/live/",
+    "https://www.youtube.com/live/tooshort",
 ]
 
 
