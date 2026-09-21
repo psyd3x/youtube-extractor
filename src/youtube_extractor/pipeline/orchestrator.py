@@ -10,7 +10,7 @@ from pathlib import Path
 from slugify import slugify
 
 from youtube_extractor.config import settings
-from youtube_extractor.models import JobStage, Metadata
+from youtube_extractor.models import JobStage, Metadata, Transcript
 from youtube_extractor.pipeline.distill import distill
 from youtube_extractor.pipeline.instructions import extract_instructions
 from youtube_extractor.pipeline.metadata import fetch_metadata
@@ -37,6 +37,36 @@ def _make_slug(meta: Metadata) -> str:
     date_part = meta.published or time.strftime("%Y-%m-%d")
     title_part = slugify(meta.title or meta.video_id, max_length=40)
     return f"{date_part}-{meta.video_id}-{title_part}"[:80]
+
+
+def _transcript_cache_path(output_dir: Path, video_id: str) -> Path:
+    return output_dir / "transcripts" / f"{video_id}.json"
+
+
+def _load_cached_transcript(path: Path) -> Transcript | None:
+    """Previously fetched transcript for this video, or None.
+
+    Never raises: a corrupt or half-written cache file must cost a re-fetch, not
+    the whole job.
+    """
+    try:
+        if not path.is_file():
+            return None
+        return Transcript.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception as e:  # noqa: BLE001 — corrupt cache is a miss, not a failure
+        logging.getLogger(__name__).warning("ignoring unreadable transcript cache %s: %s", path, e)
+        return None
+
+
+def _save_cached_transcript(path: Path, transcript: Transcript) -> None:
+    """Best-effort write, atomic via tmp+replace so a crash cannot leave a torn file."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(transcript.model_dump_json(), encoding="utf-8")
+        tmp.replace(path)
+    except Exception as e:  # noqa: BLE001 — caching is an optimisation, never fatal
+        logging.getLogger(__name__).warning("could not cache transcript %s: %s", path, e)
 
 
 async def run_pipeline(
@@ -87,17 +117,26 @@ async def run_pipeline(
     meta = await asyncio.to_thread(fetch_metadata, video_id)
 
     _emit(JobStage.transcript)
-    try:
-        transcript = await asyncio.to_thread(fetch_transcript, video_id)
-    except NoTranscriptError:
-        if not settings.whisper_enabled:
-            raise
+    # The transcript is deterministic per video and by far the most expensive stage
+    # (a 2 h stream is ~6 min of local whisper and pushes the Mac into memory
+    # pressure). Everything after it — distill, instructions — is comparatively cheap
+    # and is where failures actually happen, so a retry used to redo the whisper run
+    # for a stage that had already succeeded. Cache it and a retry starts at distill.
+    cache_path = _transcript_cache_path(output_dir, video_id)
+    transcript = await asyncio.to_thread(_load_cached_transcript, cache_path)
+    if transcript is None:
         try:
-            transcript = await asyncio.to_thread(whisper_transcript, video_id)
-        except WhisperError as e:
-            raise NoTranscriptError(
-                f"no official transcript; whisper fallback failed: {e}"
-            ) from e
+            transcript = await asyncio.to_thread(fetch_transcript, video_id)
+        except NoTranscriptError:
+            if not settings.whisper_enabled:
+                raise
+            try:
+                transcript = await asyncio.to_thread(whisper_transcript, video_id)
+            except WhisperError as e:
+                raise NoTranscriptError(
+                    f"no official transcript; whisper fallback failed: {e}"
+                ) from e
+        await asyncio.to_thread(_save_cached_transcript, cache_path, transcript)
     _emit(JobStage.distill)
     distillation = await distill(meta, transcript)
 

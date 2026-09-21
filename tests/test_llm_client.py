@@ -1,8 +1,10 @@
+import json
+
 import httpx
 import pytest
 import respx
 
-from youtube_extractor.llm.client import LLMClient, LLMError
+from youtube_extractor.llm.client import LLMClient, LLMError, missing_required
 
 
 @respx.mock
@@ -153,3 +155,71 @@ async def test_bad_json_code():
     with pytest.raises(LLMError) as ei:
         await client.chat_json(system="s", user="u", response_schema_name="x")
     assert ei.value.code == "LLM_BAD_JSON"
+
+
+_DISTILL_LIKE = {
+    "type": "object",
+    "required": ["title", "tldr", "lazy", "full"],
+    "properties": {
+        "title": {"type": "string"},
+        "tldr": {"type": "string"},
+        "lazy": {"type": "object"},
+        "full": {"type": "object"},
+    },
+}
+
+
+@respx.mock
+async def test_endpoint_that_ignores_json_schema_is_named_as_such():
+    """The Hermes failure of 2026-09-21, verbatim: HTTP 200, parseable JSON, wrong
+    shape. Previously this sailed through the client and blew up stages later as a
+    pydantic error naming the MODEL, when the fault is the ENDPOINT dropping
+    response_format."""
+    respx.post("http://x/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"lazy_summary": {"key_points": ["a"]}}'}}]},
+        )
+    )
+    client = LLMClient(base_url="http://x", api_key=None, timeout_s=5)
+    with pytest.raises(LLMError) as e:
+        await client.chat_json(
+            system="s", user="u", response_schema_name="Distillation", schema=_DISTILL_LIKE
+        )
+    assert e.value.code == "LLM_SCHEMA_IGNORED"
+    assert "ignoring structured output" in str(e.value)
+    assert "http://x" in str(e.value), "the message must name the endpoint to point at"
+
+
+@respx.mock
+async def test_conforming_response_is_returned_unchanged():
+    body = {"title": "t", "tldr": "s", "lazy": {}, "full": {}}
+    respx.post("http://x/v1/chat/completions").mock(
+        return_value=httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(body)}}]})
+    )
+    client = LLMClient(base_url="http://x", api_key=None, timeout_s=5)
+    assert await client.chat_json(
+        system="s", user="u", response_schema_name="Distillation", schema=_DISTILL_LIKE
+    ) == body
+
+
+@respx.mock
+async def test_json_object_fallback_still_reports_bad_json_not_schema_ignored():
+    """With no schema supplied there is nothing to conform to, so a junk reply must
+    stay LLM_BAD_JSON — the new code path must not swallow the old one."""
+    respx.post("http://x/v1/chat/completions").mock(
+        return_value=httpx.Response(200, json={"choices": [{"message": {"content": "nope"}}]})
+    )
+    client = LLMClient(base_url="http://x", api_key=None, timeout_s=5)
+    with pytest.raises(LLMError) as e:
+        await client.chat_json(system="s", user="u", response_schema_name="x")
+    assert e.value.code == "LLM_BAD_JSON"
+
+
+def test_missing_required_probe():
+    assert missing_required({"a": 1}, {"required": ["a", "b"]}) == ["b"]
+    assert missing_required({"a": 1, "b": 2}, {"required": ["a", "b"]}) == []
+    # No schema, no required list, or a non-dict body: nothing to assert, no false alarm.
+    assert missing_required({"a": 1}, None) == []
+    assert missing_required({"a": 1}, {}) == []
+    assert missing_required([], {"required": ["a"]}) == []
