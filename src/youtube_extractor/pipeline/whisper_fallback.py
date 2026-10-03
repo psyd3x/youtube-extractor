@@ -5,10 +5,12 @@ import tempfile
 import threading
 from pathlib import Path
 
+import httpx
 import yt_dlp
 
 from youtube_extractor.config import settings
 from youtube_extractor.models import Transcript, TranscriptSegment
+from youtube_extractor.pipeline.cookies import cookie_opts
 
 try:
     import mlx.core as mx
@@ -39,18 +41,44 @@ def _download_audio(video_id: str, dest_dir: Path) -> Path:
         "format": "bestaudio/best",
         "outtmpl": str(dest_dir / "%(id)s.%(ext)s"),
     }
-    if settings.yt_dlp_cookies_browser:
-        opts["cookiesfrombrowser"] = (settings.yt_dlp_cookies_browser,)
     try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
+        with cookie_opts() as c, yt_dlp.YoutubeDL({**opts, **c}) as ydl:
             info = ydl.extract_info(url, download=True)
             return Path(ydl.prepare_filename(info))
     except Exception as e:
         raise WhisperError(f"audio download failed for {video_id}: {e}") from e
 
 
+def _remote_transcribe(audio_path: Path) -> dict:
+    """POST to an OpenAI-compatible /v1/audio/transcriptions (verbose_json).
+
+    The reply carries text/segments/language like mlx_whisper.transcribe().
+    """
+    url = settings.whisper_api_url.rstrip("/")
+    if not url.endswith("/audio/transcriptions"):
+        url += "/v1/audio/transcriptions"
+    headers = {"Authorization": f"Bearer {settings.whisper_api_key}"} if settings.whisper_api_key else {}
+    try:
+        with open(audio_path, "rb") as fh:
+            r = httpx.post(
+                url,
+                headers=headers,
+                files={"file": (audio_path.name, fh)},
+                data={"model": settings.whisper_model, "response_format": "verbose_json"},
+                timeout=settings.whisper_api_timeout_s,
+            )
+    except httpx.HTTPError as e:
+        raise WhisperError(f"whisper api unreachable: {e}") from e
+    if r.status_code != 200:
+        raise WhisperError(f"whisper api HTTP {r.status_code}: {r.text[:200]}")
+    return r.json()
+
+
 def _transcribe(audio_path: Path) -> tuple[list[TranscriptSegment], str, str | None]:
-    result = mlx_whisper.transcribe(str(audio_path), path_or_hf_repo=settings.whisper_model)
+    if settings.whisper_api_url:
+        result = _remote_transcribe(audio_path)
+    else:
+        result = mlx_whisper.transcribe(str(audio_path), path_or_hf_repo=settings.whisper_model)
     full_text = (result.get("text") or "").strip()
     if not full_text:
         raise WhisperError("whisper produced an empty transcript")
@@ -82,7 +110,7 @@ def whisper_transcript(video_id: str) -> Transcript:
     and released afterwards (idle RAM ~0); a module lock keeps at most one
     transcription in flight at a time.
     """
-    if not _MLX_AVAILABLE:
+    if not settings.whisper_api_url and not _MLX_AVAILABLE:
         raise WhisperError(
             "mlx-whisper not available (install the '.[whisper]' extra on Apple Silicon)"
         )

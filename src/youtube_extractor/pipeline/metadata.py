@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import yt_dlp
 
-from youtube_extractor.config import settings
 from youtube_extractor.models import Metadata
+from youtube_extractor.pipeline.cookies import cookie_opts
 
 
 class MetadataError(Exception):
@@ -20,10 +20,8 @@ def fetch_metadata(video_id: str) -> Metadata:
     """Fetch video metadata via yt-dlp without downloading the video itself."""
     url = f"https://www.youtube.com/watch?v={video_id}"
     opts: dict = {"quiet": True, "skip_download": True, "no_warnings": True}
-    if settings.yt_dlp_cookies_browser:
-        opts["cookiesfrombrowser"] = (settings.yt_dlp_cookies_browser,)
     try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
+        with cookie_opts() as c, yt_dlp.YoutubeDL({**opts, **c}) as ydl:
             info = ydl.extract_info(url, download=False)
     except yt_dlp.utils.DownloadError as e:
         raise MetadataError(f"yt-dlp could not fetch metadata for {video_id}: {e}") from e
