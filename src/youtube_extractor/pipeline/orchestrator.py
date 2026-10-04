@@ -4,7 +4,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from slugify import slugify
@@ -31,6 +31,7 @@ class PipelineResult:
     # Defaulted so existing call sites that construct the 4-field result stay valid;
     # None when instructions extraction was skipped or failed (best-effort).
     pdf_instructions_path: Path | None = None
+    warnings: list[str] = field(default_factory=list)
 
 
 def _make_slug(meta: Metadata) -> str:
@@ -111,6 +112,11 @@ async def run_pipeline(
                 if existing.get("pdf_instructions_path")
                 else None
             ),
+            warnings=(
+                []
+                if existing.get("pdf_instructions_path")
+                else ["INSTRUCTIONS_MISSING: cached entry has no INSTRUCTIONS pdf; delete it and re-extract"]
+            ),
         )
 
     _emit(JobStage.metadata)
@@ -143,12 +149,15 @@ async def run_pipeline(
     # Instructions extraction is BEST-EFFORT: the core FULL/LAZY pipeline must still
     # succeed even if this fails, so any error is logged and downgraded to None.
     instructions = None
+    warnings: list[str] = []
     try:
         _emit(JobStage.instructions)
         instructions = await extract_instructions(meta, transcript)
     except Exception as e:  # best-effort: includes InstructionsError and any LLM/IO fault
-        logging.getLogger(__name__).warning("instructions extraction failed: %s", e)
+        logging.getLogger(__name__).warning("instructions extraction failed: %r", e)
         instructions = None
+        code = getattr(e, "code", type(e).__name__)
+        warnings.append(f"INSTRUCTIONS_FAILED ({code}): {e}")
 
     slug = _make_slug(meta)
     extracted_date = time.strftime("%Y-%m-%d")
@@ -219,4 +228,5 @@ async def run_pipeline(
         pdf_full_path=pdf_full_path,
         pdf_lazy_path=pdf_lazy_path,
         pdf_instructions_path=pdf_instructions_path,
+        warnings=warnings,
     )

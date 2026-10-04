@@ -45,6 +45,13 @@ async def create_job(body: JobCreateBody, bg: BackgroundTasks) -> dict:
             detail={"error": "invalid url", "error_code": "INVALID_URL", "error_message": str(e)},
         ) from e
 
+    # A second submit of a video that is still queued/running would run the whole
+    # pipeline twice (the catalog short-circuit only sees finished entries). Hand back
+    # the in-flight job instead.
+    for rec in _jobs.all():
+        if rec.status in (JobStatus.queued, JobStatus.running) and _same_video(rec.url, body.url):
+            return {"job_id": rec.id, "status": rec.status.value, "deduplicated": True}
+
     job_id = "job_" + uuid.uuid4().hex[:12]
     rec = JobRecord(
         id=job_id, url=body.url, status=JobStatus.queued,
@@ -55,15 +62,40 @@ async def create_job(body: JobCreateBody, bg: BackgroundTasks) -> dict:
     return {"job_id": job_id, "status": rec.status.value}
 
 
+@router.get("/jobs")
+async def list_jobs(since_s: int = 86_400) -> list[dict]:
+    """Jobs a UI should show after a reload: everything queued/running, plus jobs that
+    finished in the last `since_s` seconds (failures and done-with-warnings included).
+    Newest first."""
+    cutoff = time.time() - since_s
+    out = [
+        _view(r)
+        for r in _jobs.all()
+        if r.status in (JobStatus.queued, JobStatus.running) or (r.updated_at or 0) >= cutoff
+    ]
+    return sorted(out, key=lambda r: r.get("created_at") or 0, reverse=True)
+
+
+def _same_video(a: str, b: str) -> bool:
+    try:
+        return extract_video_id(a) == extract_video_id(b)
+    except InvalidYouTubeUrl:
+        return False
+
+
+def _view(rec: JobRecord) -> dict:
+    out = rec.model_dump(mode="json")
+    if rec.status == JobStatus.failed and rec.retryable:
+        out["retry_url"] = f"/jobs/{rec.id}/retry"
+    return out
+
+
 @router.get("/jobs/{job_id}")
 async def get_job(job_id: str) -> dict:
     rec = _jobs.get(job_id)
     if not rec:
         raise HTTPException(status_code=404, detail="job not found")
-    out = rec.model_dump(mode="json")
-    if rec.status == JobStatus.failed and rec.retryable:
-        out["retry_url"] = f"/jobs/{job_id}/retry"
-    return out
+    return _view(rec)
 
 
 @router.post("/jobs/{job_id}/retry")
@@ -74,6 +106,7 @@ async def retry_job(job_id: str, bg: BackgroundTasks) -> dict:
     rec.status = JobStatus.queued
     rec.error_code = None
     rec.error_message = None
+    rec.warnings = []
     rec.updated_at = time.time()
     _jobs.put(rec)
     bg.add_task(_run, job_id, rec.url)
@@ -106,6 +139,7 @@ async def _run(job_id: str, url: str) -> None:
             )
             rec.status = JobStatus.done
             rec.slug = result.slug
+            rec.warnings = list(result.warnings)
             rec.updated_at = time.time()
             _jobs.put(rec)
         except InvalidYouTubeUrl as e:

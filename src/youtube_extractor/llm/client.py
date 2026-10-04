@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 
@@ -11,6 +12,11 @@ class LLMError(Exception):
         super().__init__(message)
         self.code = code
 
+
+# Transport faults (dropped connection, reset, connect refused while vLLM restarts) are
+# usually transient; one of them used to abort a whole multi-call stage. Retried with
+# these backoffs (seconds) before giving up as LLM_UNREACHABLE.
+_TRANSPORT_BACKOFF_S: tuple[float, ...] = (2.0, 5.0, 15.0)
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```", re.DOTALL)
 
@@ -81,6 +87,23 @@ class LLMClient:
         self.model = model
         self.timeout_s = timeout_s
 
+    async def _post(self, body: dict, headers: dict) -> httpx.Response:
+        for delay in (*_TRANSPORT_BACKOFF_S, None):
+            try:
+                async with httpx.AsyncClient(timeout=self.timeout_s) as cli:
+                    return await cli.post(
+                        f"{self.base_url}/v1/chat/completions", json=body, headers=headers
+                    )
+            except httpx.HTTPError as e:
+                if delay is None:
+                    # repr, not str: several httpx errors (ReadError, RemoteProtocolError)
+                    # stringify to "", which left the log saying nothing about the cause.
+                    raise LLMError(
+                        f"transport error to {self.base_url}: {e!r}", code="LLM_UNREACHABLE"
+                    ) from e
+                await asyncio.sleep(delay)
+        raise AssertionError("unreachable")
+
     async def chat_json(
         self,
         *,
@@ -122,15 +145,7 @@ class LLMClient:
         for mode in modes:
             body = {**base_body, "response_format": mode}
             for _attempt in range(max_retries + 1):
-                try:
-                    async with httpx.AsyncClient(timeout=self.timeout_s) as cli:
-                        r = await cli.post(
-                            f"{self.base_url}/v1/chat/completions", json=body, headers=headers
-                        )
-                except httpx.HTTPError as e:
-                    raise LLMError(
-                        f"transport error to {self.base_url}: {e}", code="LLM_UNREACHABLE"
-                    ) from e
+                r = await self._post(body, headers)
 
                 if r.status_code != 200:
                     if mode.get("type") == "json_schema" and r.status_code in (400, 422):

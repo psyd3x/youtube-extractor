@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from threading import Lock
 
-from youtube_extractor.models import JobRecord
+from youtube_extractor.models import JobRecord, JobStatus
 from youtube_extractor.store.atomic import rewrite_ndjson_filtered
 
 
@@ -28,6 +28,15 @@ class JobStore:
                 self._mem[rec.id] = rec
             except Exception:
                 continue
+        # Nothing survives a restart mid-run: a job still queued/running in the file was
+        # killed with the process. Left as-is it would show "running" forever and block
+        # a resubmit of the same video (POST /jobs dedupes in-flight jobs).
+        for rec in self._mem.values():
+            if rec.status in (JobStatus.queued, JobStatus.running):
+                rec.status = JobStatus.failed
+                rec.error_code = "INTERRUPTED"
+                rec.error_message = "service restarted while this job was running; retry it"
+                rec.retryable = True
 
     def put(self, job: JobRecord) -> None:
         with self._lock:
@@ -37,6 +46,10 @@ class JobStore:
 
     def get(self, job_id: str) -> JobRecord | None:
         return self._mem.get(job_id)
+
+    def all(self) -> list[JobRecord]:
+        with self._lock:
+            return list(self._mem.values())
 
     def remove_by_slug(self, slug: str) -> list[str]:
         """Remove every job whose latest state has the given slug.

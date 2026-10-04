@@ -183,5 +183,8 @@ class JobRecord(BaseModel):
     error_code: str | None = None
     error_message: str | None = None
     retryable: bool = True
+    # Non-fatal problems on a finished job (e.g. the INSTRUCTIONS step failed but
+    # FULL/LAZY rendered), so a "done" job can still say what is missing.
+    warnings: list[str] = []
     created_at: float | None = None
     updated_at: float | None = None

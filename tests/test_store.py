@@ -99,3 +99,14 @@ def test_jobstore_remove_by_slug_no_match(tmp_path):
     removed = store.remove_by_slug("slug-Z")
     assert removed == []
     assert store.get("j1") is not None
+
+
+def test_reload_marks_inflight_jobs_interrupted(tmp_path):
+    from youtube_extractor.models import JobRecord, JobStatus
+    from youtube_extractor.store.jobs import JobStore
+    path = tmp_path / "jobs.ndjson"
+    JobStore(path).put(JobRecord(id="job_a", url="https://youtu.be/dQw4w9WgXcQ", status=JobStatus.running))
+    rec = JobStore(path).get("job_a")
+    assert rec.status == JobStatus.failed
+    assert rec.error_code == "INTERRUPTED"
+    assert rec.retryable is True

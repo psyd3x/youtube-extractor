@@ -116,7 +116,8 @@ async def test_chat_json_strips_preamble():
 
 
 @respx.mock
-async def test_transport_error_code_is_unreachable():
+async def test_transport_error_code_is_unreachable(monkeypatch):
+    monkeypatch.setattr("youtube_extractor.llm.client._TRANSPORT_BACKOFF_S", (0, 0))
     respx.post("http://x/v1/chat/completions").mock(side_effect=httpx.ConnectError("refused"))
     client = LLMClient(base_url="http://x", api_key=None, timeout_s=5)
     with pytest.raises(LLMError) as ei:
@@ -223,3 +224,30 @@ def test_missing_required_probe():
     assert missing_required({"a": 1}, None) == []
     assert missing_required({"a": 1}, {}) == []
     assert missing_required([], {"required": ["a"]}) == []
+
+
+@respx.mock
+async def test_transport_error_is_retried_then_succeeds(monkeypatch):
+    """A dropped connection mid-stage must not abort the stage: retry, then carry on."""
+    monkeypatch.setattr("youtube_extractor.llm.client._TRANSPORT_BACKOFF_S", (0, 0))
+    route = respx.post("http://x/v1/chat/completions").mock(
+        side_effect=[
+            httpx.ReadError(""),
+            httpx.RemoteProtocolError(""),
+            httpx.Response(200, json={"choices": [{"message": {"content": '{"ok": 1}'}}]}),
+        ]
+    )
+    client = LLMClient(base_url="http://x", api_key=None, timeout_s=5)
+    assert await client.chat_json(system="s", user="u", response_schema_name="x") == {"ok": 1}
+    assert route.call_count == 3
+
+
+@respx.mock
+async def test_transport_error_message_names_the_exception(monkeypatch):
+    """httpx.ReadError('') stringifies to '' — the message must still say what happened."""
+    monkeypatch.setattr("youtube_extractor.llm.client._TRANSPORT_BACKOFF_S", ())
+    respx.post("http://x/v1/chat/completions").mock(side_effect=httpx.ReadError(""))
+    client = LLMClient(base_url="http://x", api_key=None, timeout_s=5)
+    with pytest.raises(LLMError) as ei:
+        await client.chat_json(system="s", user="u", response_schema_name="x")
+    assert "ReadError" in str(ei.value)

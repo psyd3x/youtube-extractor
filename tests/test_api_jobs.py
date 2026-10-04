@@ -128,3 +128,39 @@ def test_run_wires_stage_heartbeats(tmp_path, monkeypatch):
     assert received["on_stage"] is not None, "_run must pass on_stage to run_pipeline"
     assert final["status"] == "done"
     assert final["stage"] == "distill", "the heartbeat must persist the in-flight stage"
+
+
+def test_done_job_carries_pipeline_warnings(tmp_path, monkeypatch):
+    monkeypatch.setattr(jobs_mod, "_jobs", JobStore(tmp_path / "jobs.ndjson"))
+    res = _ok_result(tmp_path)
+    res.warnings = ["INSTRUCTIONS_FAILED (LLM_UNREACHABLE): boom"]
+    with patch.object(jobs_mod, "run_pipeline", new=AsyncMock(return_value=res)):
+        client = TestClient(create_app())
+        job_id = client.post("/jobs", json={"url": "https://youtu.be/dQw4w9WgXcQ"}).json()["job_id"]
+        final = client.get(f"/jobs/{job_id}").json()
+    assert final["status"] == "done"
+    assert final["warnings"] == ["INSTRUCTIONS_FAILED (LLM_UNREACHABLE): boom"]
+
+
+def test_list_jobs_survives_reload(tmp_path, monkeypatch):
+    """GET /jobs is what lets the UI rebuild its job list after a page refresh."""
+    monkeypatch.setattr(jobs_mod, "_jobs", JobStore(tmp_path / "jobs.ndjson"))
+    with patch.object(jobs_mod, "run_pipeline", new=AsyncMock(side_effect=DistillError("x", code="LLM_BAD_JSON"))):
+        client = TestClient(create_app())
+        job_id = client.post("/jobs", json={"url": "https://youtu.be/dQw4w9WgXcQ"}).json()["job_id"]
+        listed = client.get("/jobs").json()
+    assert [j["id"] for j in listed] == [job_id]
+    assert listed[0]["status"] == "failed"
+    assert listed[0]["retry_url"] == f"/jobs/{job_id}/retry"
+
+
+def test_resubmit_of_inflight_video_returns_same_job(tmp_path, monkeypatch):
+    store = JobStore(tmp_path / "jobs.ndjson")
+    monkeypatch.setattr(jobs_mod, "_jobs", store)
+    from youtube_extractor.models import JobRecord, JobStatus
+    store.put(JobRecord(id="job_running1", url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                        status=JobStatus.running, created_at=time.time(), updated_at=time.time()))
+    client = TestClient(create_app())
+    r = client.post("/jobs", json={"url": "https://youtu.be/dQw4w9WgXcQ"}).json()
+    assert r["job_id"] == "job_running1"
+    assert r["deduplicated"] is True
